@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Торты Ажур — Джунгли Сити</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #1a1a2e;
+            color: #fff;
+        }
+
+        .header {
+            background: linear-gradient(145deg, #fd79a8, #e84393);
+            padding: 15px 20px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .back-btn {
+            color: #fff;
+            text-decoration: none;
+            font-size: 1.5rem;
+        }
+
+        .header h1 {
+            font-size: 1.2rem;
+        }
+
+        .gallery {
+            padding: 10px;
+        }
+
+        .page-img {
+            width: 100%;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .cta-btn {
+            display: block;
+            background: linear-gradient(145deg, #ffd700, #ffb700);
+            color: #1a1a2e;
+            text-align: center;
+            padding: 15px 30px;
+            margin: 20px;
+            border-radius: 30px;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 1.1rem;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 20px;
+            opacity: 0.6;
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <a href="index.html" class="back-btn">←</a>
+        <h1>🎂 Торты Ажур</h1>
+    </div>
+    <div class="gallery">
+        <script>
+            const pages = 60;
+            for (let i = 1; i <= pages; i++) {
+                const num = String(i).padStart(2, '0');
+                document.write(`<img src="images/cakes/page-${num}.jpg" alt="Страница ${i}" class="page-img" loading="lazy">`);
+            }
+        </script>
+    </div>
+    <a href="https://t.me/JungleCityNN_bot" class="cta-btn">💬 Заказать торт</a>
+    <div class="footer">
+        <p>📞 +7 (831) 213-50-50</p>
+    </div>
+</body>
+
+</html>
