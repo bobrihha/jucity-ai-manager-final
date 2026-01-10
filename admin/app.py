@@ -10,7 +10,7 @@ import streamlit as st
 from datetime import datetime
 import os
 
-from db import init_db, SessionLocal, Document, Lead, Session as DBSession, Message
+from db import init_db, SessionLocal, Document, Lead, Session as DBSession, Message, BotCommand
 from core.rag import RAGSystem
 
 # Инициализация
@@ -62,7 +62,7 @@ if st.sidebar.button("🚪 Выйти"):
 # Сайдбар для навигации
 page = st.sidebar.selectbox(
     "Раздел",
-    ["📚 База знаний", "💬 Диалоги", "🎯 Заявки", "⚙️ Настройки"]
+    ["📚 База знаний", "🤖 Команды бота", "💬 Диалоги", "🎯 Заявки", "⚙️ Настройки"]
 )
 
 
@@ -165,6 +165,92 @@ if page == "📚 База знаний":
             st.success(f"Проиндексировано: {len(docs)} документов из БД + {file_count} файлов")
 
 
+# ============ КОМАНДЫ БОТА ============
+elif page == "🤖 Команды бота":
+    st.header("🤖 Управление командами бота")
+    
+    tab1, tab2 = st.tabs(["Список команд", "Добавить команду"])
+    
+    with tab1:
+        st.subheader("Активные команды")
+        
+        db = SessionLocal()
+        commands = db.query(BotCommand).order_by(BotCommand.order, BotCommand.command).all()
+        
+        if commands:
+            for cmd in commands:
+                status_icon = "🟢" if cmd.is_active else "🔴"
+                logic_icon = "⚙️" if cmd.has_logic else "📄"
+                
+                with st.expander(f"{status_icon} {cmd.command} — {cmd.title} ({logic_icon})"):
+                    with st.form(f"edit_cmd_{cmd.id}"):
+                        new_title = st.text_input("Название (в меню)", value=cmd.title)
+                        new_response = st.text_area("Ответ (HTML)", value=cmd.response or "", height=150)
+                        new_order = st.number_input("Порядок", value=cmd.order, step=1)
+                        new_is_active = st.checkbox("Активна", value=cmd.is_active)
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.form_submit_button("💾 Сохранить"):
+                                cmd.title = new_title
+                                cmd.response = new_response
+                                cmd.order = new_order
+                                cmd.is_active = new_is_active
+                                db.commit()
+                                st.success("Обновлено!")
+                                st.rerun()
+                        
+                        with col2:
+                            if st.form_submit_button("🗑️ Удалить"):
+                                db.delete(cmd)
+                                db.commit()
+                                st.warning("Команда удалена!")
+                                st.rerun()
+        else:
+            st.info("Команд пока нет.")
+        
+        db.close()
+
+    with tab2:
+        st.subheader("Новая команда")
+        
+        with st.form("new_cmd_form"):
+            new_command = st.text_input("Команда (без /)", help="Например: prices")
+            new_title = st.text_input("Название (в меню)", help="Например: 💰 Цены")
+            new_response = st.text_area("Ответ (HTML)", help="Текст ответа бота. Поддерживает HTML теги.")
+            new_order = st.number_input("Порядок", value=0, step=1)
+            
+            submitted = st.form_submit_button("➕ Добавить команду")
+            
+            if submitted:
+                if not new_command or not new_title:
+                    st.error("Заполните команду и название!")
+                else:
+                    db = SessionLocal()
+                    # Проверка уникальности
+                    exists = db.query(BotCommand).filter(BotCommand.command == new_command).first()
+                    if exists:
+                        st.error("Такая команда уже есть!")
+                        db.close()
+                    else:
+                        cmd = BotCommand(
+                            command=new_command,
+                            title=new_title,
+                            response=new_response,
+                            order=new_order,
+                            is_active=True,
+                            has_logic=False # Новые команды по умолчанию без спец. логики
+                        )
+                        db.add(cmd)
+                        db.commit()
+                        db.close()
+                        st.success(f"Команда /{new_command} добавлена!")
+                        st.rerun()
+                        
+    st.divider()
+    st.info("💡 **Примечание:** Текст ответов обновляется мгновенно. Для обновления **меню** (кнопка слева от ввода) может потребоваться перезапуск бота или время.")
+
+
 # ============ ДИАЛОГИ ============
 elif page == "💬 Диалоги":
     st.header("💬 История диалогов")
@@ -175,8 +261,11 @@ elif page == "💬 Диалоги":
     if sessions:
         for session in sessions:
             intent_emoji = "🎉" if session.intent == "birthday" else "🎟" if session.intent == "general" else "❓"
+            # Определяем источник по telegram_id
+            source = "VK" if str(session.telegram_id).startswith("vk_") else "Telegram"
+            user_id = session.telegram_id.replace("vk_", "") if source == "VK" else session.telegram_id
             
-            with st.expander(f"{intent_emoji} Telegram: {session.telegram_id} | {session.updated_at.strftime('%d.%m.%Y %H:%M')}"):
+            with st.expander(f"{intent_emoji} {source}: {user_id} | {session.updated_at.strftime('%d.%m.%Y %H:%M')}"):
                 messages = db.query(Message).filter(Message.session_id == session.id).order_by(Message.id).all()
                 
                 for msg in messages:

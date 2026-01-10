@@ -5,7 +5,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from core import detect_intent, agent, rag, lead_collector
-from db import SessionLocal, Session as DBSession, Message, Lead
+from db import SessionLocal, Session as DBSession, Message, Lead, BotCommand
 from config.settings import MANAGER_CHAT_ID
 from core.notifications import (
     send_to_managers, 
@@ -52,7 +52,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        f"Добро пожаловать в Джунгли Сити, {user.first_name}! 🦁\n\n"
+        f"Добро пожаловать в Джунгли Сити, {user.first_name}! 💚💜\n\n"
         "Здесь каждый день — приключение, а ваш ребёнок — главный герой джунглей!\n\n"
         "Я Джуси — ваш проводник по парку. С радостью помогу:\n"
         "• Узнать всё о парке и ценах\n"
@@ -64,6 +64,209 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 from core.utils import get_prices_from_knowledge
+
+
+async def prices_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /prices — цены на билеты."""
+    prices = get_prices_from_knowledge()
+    
+    await update.message.reply_text(
+        "💰 <b>Цены на безлимитный билет</b>\n\n"
+        f"🟢 Понедельник (супер-цена): <b>{prices['monday']} ₽</b>\n"
+        f"🔵 Будни (вт-пт): <b>{prices['weekday']} ₽</b>\n"
+        f"🔴 Выходные: <b>{prices['weekend']} ₽</b>\n\n"
+        "✅ Взрослые — БЕСПЛАТНО\n"
+        "✅ Дети до 1 года — БЕСПЛАТНО\n\n"
+        "<b>Скидки:</b>\n"
+        "• Дети 1-4 года: -20% в будни\n"
+        "• Многодетные: -30% (вт-вс)\n"
+        "• После 20:00: -50%\n"
+        "• Именинник: -50% (±5 дней от ДР)\n\n"
+        "Напишите, если нужна помощь с расчётом! 😊",
+        parse_mode="HTML"
+    )
+
+
+async def birthday_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /birthday — запуск бронирования ДР."""
+    user = update.effective_user
+    prices = get_prices_from_knowledge()
+    
+    # Устанавливаем intent = birthday для пользователя
+    db = SessionLocal()
+    try:
+        session = db.query(DBSession).filter(DBSession.telegram_id == str(user.id)).first()
+        if not session:
+            session = DBSession(telegram_id=str(user.id), park_id="nn")
+            db.add(session)
+        session.intent = "birthday"
+        session.lead_data = {}
+        db.commit()
+    finally:
+        db.close()
+    
+    await update.message.reply_text(
+        "🎉 <b>День рождения в Джунгли Сити!</b>\n\n"
+        "Что входит (от 6 детей):\n"
+        "✅ Именинник — БЕСПЛАТНО\n"
+        "✅ Комната на 3 часа — БЕСПЛАТНО\n"
+        "✅ Взрослые — БЕСПЛАТНО\n"
+        "✅ Безлимит на все аттракционы весь день\n\n"
+        f"<b>Цены на билеты:</b>\n"
+        f"• Будни (вт-пт): {prices['weekday']} ₽\n"
+        f"• Выходные: {prices['weekend']} ₽\n"
+        f"• Понедельник: {prices['monday']} ₽\n\n"
+        "Чтобы рассчитать и забронировать — ответьте:\n"
+        "📅 <b>На какую дату планируете праздник?</b>",
+        parse_mode="HTML"
+    )
+
+
+async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /schedule — режим работы."""
+    await update.message.reply_text(
+        "🕐 <b>Режим работы Джунгли Сити</b>\n\n"
+        "📍 Нижний Новгород, ТЦ «Лента»\n\n"
+        "• Понедельник: 12:00 - 22:00\n"
+        "• Вторник - Воскресенье: 10:00 - 22:00\n\n"
+        "⚠️ Вход в парк до 21:00\n"
+        "🍕 Ресторан принимает заказы до 21:00",
+        parse_mode="HTML"
+    )
+
+
+async def afisha_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /afisha — афиша событий."""
+    await update.message.reply_text(
+        "🎪 <b>Афиша Джунгли Сити</b>\n\n"
+        "Актуальные события и мероприятия:\n"
+        "👉 <a href='https://nn.jucity.ru/afisha/'>Открыть афишу</a>\n\n"
+        "У нас регулярно проходят:\n"
+        "• Шоу-программы\n"
+        "• Мастер-классы\n"
+        "• Дискотеки\n"
+        "• Праздничные мероприятия\n\n"
+        "Спрашивайте — расскажу подробнее! 🌟",
+        parse_mode="HTML"
+    )
+
+
+async def rules_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /rules — правила парка."""
+    await update.message.reply_text(
+        "📋 <b>Правила посещения Джунгли Сити</b>\n\n"
+        "🧦 <b>Носки обязательны</b> на игровой территории\n\n"
+        "👨‍👩‍👧 <b>Дети под присмотром</b> взрослых\n\n"
+        "🍕 <b>Своя еда запрещена</b>\n"
+        "   (кроме детского питания и воды)\n\n"
+        "🚫 <b>Запрещено:</b>\n"
+        "• Алкоголь\n"
+        "• Домашние животные\n"
+        "• Опасные предметы\n\n"
+        "♿ Есть пандусы и лифты через ТЦ «Лента»",
+        parse_mode="HTML"
+    )
+
+
+async def human_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /human — вызов живого менеджера."""
+    user = update.effective_user
+    
+    # Отправляем уведомление менеджерам
+    escalation_msg = format_escalation_message(
+        platform="telegram",
+        user_id=str(user.id),
+        username=user.username,
+        user_name=user.first_name or "Неизвестный",
+        message="[Запрос через команду /human]"
+    )
+    await send_to_managers(escalation_msg)
+    
+    await update.message.reply_text(
+        "👤 <b>Запрос передан менеджеру!</b>\n\n"
+        "Наш специалист скоро свяжется с вами.\n\n"
+        "📞 Или позвоните: <b>+7 (831) 213-50-50</b>\n"
+        "💬 WhatsApp: +7 (962) 509-74-93",
+        parse_mode="HTML"
+    )
+
+
+async def contacts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /contacts — контакты и как добраться."""
+    await update.message.reply_text(
+        "📍 <b>Как нас найти</b>\n\n"
+        "<b>Адрес:</b>\n"
+        "г. Нижний Новгород, ул. Коминтерна, д. 11\n"
+        "ТЦ «Лента», 1 этаж\n\n"
+        "<b>Телефоны:</b>\n"
+        "📞 +7 (831) 213-50-50\n"
+        "💬 WhatsApp: +7 (962) 509-74-93\n\n"
+        "<b>Как добраться:</b>\n"
+        "🚇 Метро «Буревестник» — 250 м\n"
+        "🚌 Автобус 90, 95, 71, 78, 29 → ост. «Варя»\n"
+        "🚋 Троллейбус 5, 8 → ост. «Варя»\n"
+        "🚗 Бесплатная парковка у ТЦ",
+        parse_mode="HTML"
+    )
+
+
+async def cafe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /cafe — меню ресторана."""
+    await update.message.reply_text(
+        "🍕 <b>Ресторан Джунгли Сити</b>\n\n"
+        "У нас вкусно и для детей, и для взрослых!\n\n"
+        "📖 <b>Меню:</b>\n"
+        "👉 <a href='https://catalog.botcicada.ru/menu.html'>Открыть меню</a>\n\n"
+        "🎂 <b>Торты на заказ:</b>\n"
+        "👉 <a href='https://catalog.botcicada.ru/cakes.html'>Каталог тортов</a>\n\n"
+        "⏰ Ресторан работает до 21:00",
+        parse_mode="HTML"
+    )
+
+
+async def promo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /promo — текущие акции."""
+    await update.message.reply_text(
+        "🎁 <b>Акции Джунгли Сити</b>\n\n"
+        "🔥 <b>СКИДКА 26% НА ПРАЗДНИК В 2026!</b>\n"
+        "Период: до 11 января 2026\n\n"
+        "Условия:\n"
+        "• Бронирование праздника от 6 детей\n"
+        "• Праздник может быть в любой день 2026 года\n"
+        "• Скидка НЕ распространяется на пакеты\n\n"
+        "<b>Пример:</b>\n"
+        "8 детей в субботу: 7 × 1590 = 11 130 ₽\n"
+        "Со скидкой 26%: <b>8 236 ₽</b> 💰\n\n"
+        "Хотите забронировать со скидкой? Напишите /birthday",
+        parse_mode="HTML"
+    )
+
+
+async def dynamic_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Универсальный обработчик динамических команд из БД."""
+    command_name = update.message.text.replace("/", "").split("@")[0]  # удаляем @botname если есть
+    
+    db = SessionLocal()
+    try:
+        command = db.query(BotCommand).filter(
+            BotCommand.command == command_name, 
+            BotCommand.is_active == True
+        ).first()
+        
+        if command and command.response:
+            await update.message.reply_text(
+                command.response,
+                parse_mode="HTML"
+            )
+        else:
+            # Если команда не найдена в БД или неактивна
+            # Можно отправить заглушку или просто игнорировать
+            logger.warning(f"Command /{command_name} not found or inactive.")
+    except Exception as e:
+        logger.error(f"Error executing dynamic command /{command_name}: {e}")
+    finally:
+        db.close()
+
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка нажатий на инлайн-кнопки."""
@@ -265,7 +468,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.info(f"Lead #{current_lead.id} final data: {lead_to_dict(current_lead)}")
                 
                 # Отправляем уведомление
-                msg_text = format_lead_message("telegram", user_id, lead_to_dict(current_lead))
+                msg_text = format_lead_message("telegram", user_id, lead_to_dict(current_lead), username=user.username)
                 await send_to_managers(msg_text)
                 
                 # Помечаем как отправленный

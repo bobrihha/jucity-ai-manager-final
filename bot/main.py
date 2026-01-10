@@ -1,11 +1,15 @@
 """Telegram Bot — точка входа."""
 
 import logging
+from telegram import BotCommand
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 
-from bot.handlers import start_command, handle_message, button_handler, error_handler
+from bot.handlers import (
+    start_command, handle_message, button_handler, error_handler,
+    birthday_command, human_command, dynamic_command_handler
+)
 from config.settings import TELEGRAM_BOT_TOKEN
-from db import init_db
+from db import init_db, SessionLocal, BotCommand
 
 # Настройка логирования
 logging.basicConfig(
@@ -17,6 +21,31 @@ logger = logging.getLogger(__name__)
 
 async def post_init(application):
     """Инициализация после создания приложения."""
+    # Устанавливаем меню команд из БД
+    db = SessionLocal()
+    try:
+        db_commands = db.query(BotCommand).filter(BotCommand.is_active == True).order_by(BotCommand.order).all()
+        
+        commands = []
+        if db_commands:
+            for cmd in db_commands:
+                commands.append(BotCommand(cmd.command, cmd.title))
+        else:
+            # Дефолтные команды для первого запуска
+            commands = [
+                BotCommand("start", "🏠 Главное меню"),
+                BotCommand("prices", "💰 Цены"),
+                BotCommand("birthday", "🎂 День рождения"),
+                # ... остальные можно добавить или оставить пустым если БД пустая
+            ]
+            
+        await application.bot.set_my_commands(commands)
+        logger.info(f"Bot menu commands set successfully! ({len(commands)} commands)")
+    except Exception as e:
+        logger.error(f"Failed to set commands: {e}")
+    finally:
+        db.close()
+    
     logger.info("Bot initialized successfully!")
 
 
@@ -44,8 +73,14 @@ def main():
         .build()
     )
     
-    # Регистрируем обработчики
+    # Регистрируем обработчики команд
     application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("birthday", birthday_command))
+    application.add_handler(CommandHandler("human", human_command))
+    
+    # Универсальный обработчик для остальных команд из БД
+    application.add_handler(MessageHandler(filters.COMMAND, dynamic_command_handler))
+    
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     

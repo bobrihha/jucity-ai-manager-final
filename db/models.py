@@ -84,3 +84,19 @@ class Document(Base):
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class BotCommand(Base):
+    """Команда бота для быстрого меню."""
+    __tablename__ = "bot_commands"
+    
+    id = Column(Integer, primary_key=True)
+    command = Column(String(50), unique=True, index=True)  # prices, birthday, rules...
+    title = Column(String(100))                             # 💰 Цены
+    response = Column(Text)                                 # HTML-текст ответа
+    is_active = Column(Boolean, default=True)
+    has_logic = Column(Boolean, default=False)              # Если True - используется логика из handlers
+    order = Column(Integer, default=0)                      # Порядок в меню
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

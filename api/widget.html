@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jungle City Chat Widget</title>
+    <style>
+        /* ========================================
+           JUNGLE CITY CHAT WIDGET STYLES
+           ======================================== */
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        /* Chat Button */
+        #jc-chat-button {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+            border: none;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(76, 175, 80, 0.4);
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        #jc-chat-button:hover {
+            transform: scale(1.1);
+            box-shadow: 0 6px 20px rgba(76, 175, 80, 0.5);
+        }
+
+        #jc-chat-button svg {
+            width: 28px;
+            height: 28px;
+            fill: white;
+        }
+
+        /* Chat notification badge */
+        #jc-chat-badge {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            width: 20px;
+            height: 20px;
+            background: #FF5722;
+            border-radius: 50%;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            color: white;
+            font-weight: bold;
+        }
+
+        /* Chat Window */
+        #jc-chat-window {
+            position: fixed;
+            bottom: 90px;
+            right: 20px;
+            width: 380px;
+            height: 550px;
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            z-index: 9998;
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+            animation: slideUp 0.3s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Chat Header */
+        #jc-chat-header {
+            background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+            color: white;
+            padding: 16px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        #jc-chat-avatar {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            background: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+
+        #jc-chat-info h3 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+
+        #jc-chat-info p {
+            font-size: 12px;
+            opacity: 0.9;
+        }
+
+        #jc-chat-close {
+            margin-left: auto;
+            background: none;
+            border: none;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            opacity: 0.8;
+            transition: opacity 0.2s;
+        }
+
+        #jc-chat-close:hover {
+            opacity: 1;
+        }
+
+        /* Chat Messages */
+        #jc-chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f5f7fa;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .jc-message {
+            max-width: 85%;
+            padding: 12px 16px;
+            border-radius: 16px;
+            font-size: 14px;
+            line-height: 1.5;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .jc-message.bot {
+            background: white;
+            color: #333;
+            border-bottom-left-radius: 4px;
+            align-self: flex-start;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        .jc-message.user {
+            background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+            color: white;
+            border-bottom-right-radius: 4px;
+            align-self: flex-end;
+        }
+
+        .jc-message.typing {
+            background: white;
+            padding: 16px;
+        }
+
+        .jc-typing-dots {
+            display: flex;
+            gap: 4px;
+        }
+
+        .jc-typing-dots span {
+            width: 8px;
+            height: 8px;
+            background: #4CAF50;
+            border-radius: 50%;
+            animation: typing 1.4s infinite both;
+        }
+
+        .jc-typing-dots span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .jc-typing-dots span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typing {
+
+            0%,
+            100% {
+                opacity: 0.3;
+                transform: scale(0.8);
+            }
+
+            50% {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        /* Quick Replies */
+        .jc-quick-replies {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .jc-quick-reply {
+            background: #e8f5e9;
+            color: #2E7D32;
+            border: 1px solid #4CAF50;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .jc-quick-reply:hover {
+            background: #4CAF50;
+            color: white;
+        }
+
+        /* Chat Input */
+        #jc-chat-input-area {
+            padding: 16px;
+            background: white;
+            border-top: 1px solid #eee;
+            display: flex;
+            gap: 10px;
+        }
+
+        #jc-chat-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid #ddd;
+            border-radius: 24px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        #jc-chat-input:focus {
+            border-color: #4CAF50;
+        }
+
+        #jc-chat-send {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s;
+        }
+
+        #jc-chat-send:hover {
+            transform: scale(1.05);
+        }
+
+        #jc-chat-send svg {
+            width: 20px;
+            height: 20px;
+            fill: white;
+        }
+
+        #jc-chat-send:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Mobile Responsive */
+        @media (max-width: 420px) {
+            #jc-chat-window {
+                width: 100%;
+                height: 100%;
+                bottom: 0;
+                right: 0;
+                border-radius: 0;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- ТЕСТОВАЯ СТРАНИЦА ДЛЯ ДЕМОНСТРАЦИИ -->
+    <div style="padding: 50px; text-align: center;">
+        <h1>🐒 Тестовая страница для чат-виджета</h1>
+        <p>Нажмите на зелёную кнопку в правом нижнем углу</p>
+    </div>
+
+    <!-- ========================================
+         CHAT WIDGET HTML (ВСТАВИТЬ НА САЙТ)
+         ======================================== -->
+
+    <!-- Chat Button -->
+    <button id="jc-chat-button" onclick="JCChat.toggle()">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z" />
+        </svg>
+        <span id="jc-chat-badge">1</span>
+    </button>
+
+    <!-- Chat Window -->
+    <div id="jc-chat-window">
+        <!-- Header -->
+        <div id="jc-chat-header">
+            <div id="jc-chat-avatar">🐒</div>
+            <div id="jc-chat-info">
+                <h3>Джуси</h3>
+                <p>Помощник Джунгли Сити</p>
+            </div>
+            <button id="jc-chat-close" onclick="JCChat.close()">&times;</button>
+        </div>
+
+        <!-- Messages -->
+        <div id="jc-chat-messages">
+            <!-- Messages will be added here -->
+        </div>
+
+        <!-- Input -->
+        <div id="jc-chat-input-area">
+            <input type="text" id="jc-chat-input" placeholder="Напишите сообщение..."
+                onkeypress="if(event.key==='Enter')JCChat.send()">
+            <button id="jc-chat-send" onclick="JCChat.send()">
+                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- ========================================
+         CHAT WIDGET JAVASCRIPT
+         ======================================== -->
+    <script>
+        // ============================================
+        // JUNGLE CITY CHAT WIDGET
+        // Версия: 1.0.0
+        // ============================================
+
+        const JCChat = {
+            // Конфигурация - ИЗМЕНИТЬ НА ПРОДАКШН URL!
+            API_URL: 'https://bot.jucity.ru/chat',
+
+            sessionId: null,
+            isOpen: false,
+            isLoading: false,
+
+            // Инициализация
+            init: function () {
+                // Восстанавливаем session_id из localStorage
+                this.sessionId = localStorage.getItem('jc_chat_session');
+
+                // Показываем приветствие через 3 секунды
+                setTimeout(() => {
+                    if (!this.isOpen && !localStorage.getItem('jc_chat_greeted')) {
+                        this.showGreeting();
+                    }
+                }, 3000);
+            },
+
+            // Показать приветствие
+            showGreeting: function () {
+                document.getElementById('jc-chat-badge').style.display = 'flex';
+            },
+
+            // Открыть/закрыть чат
+            toggle: function () {
+                if (this.isOpen) {
+                    this.close();
+                } else {
+                    this.open();
+                }
+            },
+
+            // Открыть чат
+            open: function () {
+                this.isOpen = true;
+                document.getElementById('jc-chat-window').style.display = 'flex';
+                document.getElementById('jc-chat-badge').style.display = 'none';
+                localStorage.setItem('jc_chat_greeted', 'true');
+
+                // Если это первое открытие - показываем приветствие
+                if (!document.querySelector('.jc-message')) {
+                    this.addBotMessage(`Привет! 👋 Я Джуси из Джунглей! 🐒
+
+Чем могу помочь?`);
+                    this.showQuickReplies([
+                        '🎟 Узнать о парке',
+                        '🎉 Организовать праздник',
+                        '💰 Цены на билеты'
+                    ]);
+                }
+
+                document.getElementById('jc-chat-input').focus();
+            },
+
+            // Закрыть чат
+            close: function () {
+                this.isOpen = false;
+                document.getElementById('jc-chat-window').style.display = 'none';
+            },
+
+            // Добавить сообщение бота
+            addBotMessage: function (text) {
+                const messages = document.getElementById('jc-chat-messages');
+                const div = document.createElement('div');
+                div.className = 'jc-message bot';
+                div.innerHTML = this.formatMessage(text);
+                messages.appendChild(div);
+                messages.scrollTop = messages.scrollHeight;
+            },
+
+            // Добавить сообщение пользователя
+            addUserMessage: function (text) {
+                const messages = document.getElementById('jc-chat-messages');
+                const div = document.createElement('div');
+                div.className = 'jc-message user';
+                div.textContent = text;
+                messages.appendChild(div);
+                messages.scrollTop = messages.scrollHeight;
+            },
+
+            // Показать индикатор набора
+            showTyping: function () {
+                const messages = document.getElementById('jc-chat-messages');
+                const div = document.createElement('div');
+                div.className = 'jc-message bot typing';
+                div.id = 'jc-typing';
+                div.innerHTML = '<div class="jc-typing-dots"><span></span><span></span><span></span></div>';
+                messages.appendChild(div);
+                messages.scrollTop = messages.scrollHeight;
+            },
+
+            // Скрыть индикатор набора
+            hideTyping: function () {
+                const typing = document.getElementById('jc-typing');
+                if (typing) typing.remove();
+            },
+
+            // Показать быстрые ответы
+            showQuickReplies: function (options) {
+                const messages = document.getElementById('jc-chat-messages');
+                const div = document.createElement('div');
+                div.className = 'jc-quick-replies';
+                div.id = 'jc-quick-replies';
+                options.forEach(option => {
+                    const btn = document.createElement('button');
+                    btn.className = 'jc-quick-reply';
+                    btn.textContent = option;
+                    btn.onclick = () => {
+                        div.remove();
+                        this.sendMessage(option);
+                    };
+                    div.appendChild(btn);
+                });
+                messages.appendChild(div);
+                messages.scrollTop = messages.scrollHeight;
+            },
+
+            // Форматирование сообщения (ссылки, переводы строк)
+            formatMessage: function (text) {
+                // Преобразуем ссылки
+                text = text.replace(
+                    /(https?:\/\/[^\s]+)/g,
+                    '<a href="$1" target="_blank" style="color: #4CAF50;">$1</a>'
+                );
+                // Преобразуем переводы строк
+                text = text.replace(/\n/g, '<br>');
+                return text;
+            },
+
+            // Отправить сообщение
+            send: function () {
+                const input = document.getElementById('jc-chat-input');
+                const text = input.value.trim();
+                if (!text || this.isLoading) return;
+
+                input.value = '';
+                this.sendMessage(text);
+            },
+
+            // Отправить сообщение на сервер
+            sendMessage: async function (text) {
+                // Удаляем быстрые ответы
+                const quickReplies = document.getElementById('jc-quick-replies');
+                if (quickReplies) quickReplies.remove();
+
+                this.addUserMessage(text);
+                this.showTyping();
+                this.isLoading = true;
+                document.getElementById('jc-chat-send').disabled = true;
+
+                try {
+                    const response = await fetch(this.API_URL, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            message: text,
+                            session_id: this.sessionId
+                        })
+                    });
+
+                    const data = await response.json();
+
+                    this.hideTyping();
+                    this.addBotMessage(data.reply);
+
+                    // Сохраняем session_id
+                    if (data.session_id) {
+                        this.sessionId = data.session_id;
+                        localStorage.setItem('jc_chat_session', data.session_id);
+                    }
+
+                } catch (error) {
+                    console.error('Chat error:', error);
+                    this.hideTyping();
+                    this.addBotMessage('Ой, что-то пошло не так 😅 Попробуйте ещё раз или позвоните нам: +7 (831) 213-50-50');
+                }
+
+                this.isLoading = false;
+                document.getElementById('jc-chat-send').disabled = false;
+                document.getElementById('jc-chat-input').focus();
+            }
+        };
+
+        // Инициализация при загрузке страницы
+        document.addEventListener('DOMContentLoaded', function () {
+            JCChat.init();
+        });
+    </script>
+
+</body>
+
+</html>

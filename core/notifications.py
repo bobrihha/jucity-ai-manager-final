@@ -33,24 +33,39 @@ async def send_to_managers(text: str):
     except Exception as e:
         logger.error(f"Error sending notification: {e}")
 
-def format_lead_message(platform: str, user_id: str, lead_data: dict) -> str:
+def format_lead_message(platform: str, user_id: str, lead_data: dict, username: str = None) -> str:
     """Форматирование заявки для менеджеров."""
     
     source = "ВКонтакте" if platform == "vk" else "Telegram"
+    
+    # Формируем ссылку на профиль
     if platform == "vk":
         user_link = f"https://vk.com/id{user_id.replace('vk_', '')}"
+        contact_info = f"<a href='{user_link}'>Открыть профиль</a>"
     else:
-        user_link = f"tg://user?id={user_id}"
+        # Telegram: предпочтительно username, затем tg://user?id=
+        if username:
+            user_link = f"https://t.me/{username}"
+            contact_info = f"@{username} (<a href='{user_link}'>открыть</a>)"
+        else:
+            user_link = f"tg://user?id={user_id}"
+            contact_info = f"<a href='{user_link}'>Открыть чат</a>"
+    
+    # Форматируем именинника
+    child_info = lead_data.get('child_name', 'Не указан')
+    if lead_data.get('child_age'):
+        child_info += f", {lead_data.get('child_age')} лет"
         
     msg = (
         f"🔥 <b>НОВАЯ ЗАЯВКА ({source})</b>\n\n"
+        f"🎂 <b>Именинник:</b> {child_info}\n"
         f"📅 <b>Дата:</b> {lead_data.get('event_date', 'Не указана')}\n"
         f"⏰ <b>Время:</b> {lead_data.get('time', 'Не указано')}\n"
         f"👥 <b>Гостей:</b> {lead_data.get('kids_count', '?')} дет. + {lead_data.get('adults_count', '?')} взр.\n"
         f"🏠 <b>Формат:</b> {lead_data.get('format', 'Не указан')}\n"
         f"👤 <b>Заказчик:</b> {lead_data.get('customer_name', 'Не указан')}\n"
         f"📱 <b>Телефон:</b> {lead_data.get('phone', '🔥 НЕ УКАЗАН 🔥')}\n\n"
-        f"🔗 <b>Профиль клиента:</b> <a href='{user_link}'>Открыть</a>\n"
+        f"🔗 <b>Профиль:</b> {contact_info}\n"
         f"🕒 <i>Создано: {datetime.now().strftime('%d.%m.%Y %H:%M')}</i>"
     )
     return msg
