@@ -4,6 +4,7 @@ import asyncio
 import logging
 from vkbottle.bot import Bot, Message
 from vkbottle import Keyboard, KeyboardButtonColor, Text
+import re
 
 from core.agent import Agent
 from core.rag import RAGSystem
@@ -145,6 +146,38 @@ def create_vk_bot(token: str, group_id: int):
             user_msg = DBMessage(session_id=session.id, role="user", content=message_text)
             db.add(user_msg)
             db.commit()
+
+            # --- НОВАЯ ЛОГИКА: Проверка на ID приложения ---
+            app_id_match = re.search(r'(?:id|ид|код|номер|^)\s*[:.\-]?\s*(\d{4,})', message_text, re.IGNORECASE)
+            
+            if app_id_match:
+                app_id = app_id_match.group(1)
+                
+                # Получаем имя пользователя
+                user_info = await message.get_user()
+                user_name = f"{user_info.first_name} {user_info.last_name}" if user_info else "Неизвестный"
+                
+                # Отправляем уведомление менеджерам (через Telegram bridge)
+                try:
+                    msg_text = (
+                        f"🔔 <b>Новый App ID (из ВК)!</b>\n\n"
+                        f"👤 Пользователь: {user_name} (id{user_id})\n"
+                        f"🔢 ID: <code>{app_id}</code>\n"
+                        f"💬 Сообщение: {message_text}"
+                    )
+                    await send_to_managers(msg_text)
+                    logger.info(f"VK App ID {app_id} notification sent to manager")
+                except Exception as e:
+                    logger.error(f"Failed to notify manager about VK App ID: {e}")
+                
+                # Отвечаем пользователю
+                await message.answer(
+                    "Принято! Передал менеджеру для начисления баллов. "
+                    "Баллы будут начислены в течение 7 дней. "
+                    "Спасибо, что вы с нами! 💚💜"
+                )
+                return
+            # -----------------------------------------------
             
             # Проверяем запрос живого менеджера
             if needs_human_escalation(message_text):

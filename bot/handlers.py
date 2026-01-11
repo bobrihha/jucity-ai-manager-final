@@ -3,6 +3,7 @@
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+import re
 
 from core import detect_intent, agent, rag, lead_collector
 from db import SessionLocal, Session as DBSession, Message, Lead, BotCommand
@@ -359,6 +360,44 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_message = Message(session_id=session.id, role="user", content=message_text)
         db.add(user_message)
         db.commit()
+
+        # --- НОВАЯ ЛОГИКА: Проверка на ID приложения ---
+        # Ищем паттерн ID (числа, возможно с префиксом "id", "ид", "номер")
+        # Regex ловит: "12345", "ID 12345", "ид: 12345", "мой номер 12345"
+        # Исключаем простые короткие числа, если это не явно ID (чтобы не ловить "мне 2 билета")
+        app_id_match = re.search(r'(?:id|ид|код|номер|^)\s*[:.\-]?\s*(\d{4,})', message_text, re.IGNORECASE)
+        
+        # Разрешаем просто числа от 4 знаков (например "16327") или явные ID с любым кол-вом цифр
+        if app_id_match:
+            app_id = app_id_match.group(1)
+            
+            # Отправляем уведомление менеджеру
+            if MANAGER_CHAT_ID:
+                try:
+                    user_link = f"@{user.username}" if user.username else f"ID {user_id}"
+                    msg_text = (
+                        f"🔔 <b>Новый App ID для начисления баллов!</b>\n\n"
+                        f"👤 Пользователь: {user.first_name} ({user_link})\n"
+                        f"🔢 ID: <code>{app_id}</code>\n"
+                        f"💬 Сообщение: {message_text}"
+                    )
+                    await context.bot.send_message(
+                        chat_id=MANAGER_CHAT_ID,
+                        text=msg_text,
+                        parse_mode="HTML"
+                    )
+                    logger.info(f"App ID {app_id} notification sent to manager")
+                except Exception as e:
+                    logger.error(f"Failed to notify manager about App ID: {e}")
+            
+            # Отвечаем пользователю
+            await update.message.reply_text(
+                "Принято! Передал менеджеру для начисления баллов. "
+                "Баллы будут начислены в течение 7 дней. "
+                "Спасибо, что вы с нами! 💚💜"
+            )
+            return
+        # -----------------------------------------------
         
         # Проверяем запрос живого менеджера
         if needs_human_escalation(message_text):
