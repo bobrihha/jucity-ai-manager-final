@@ -319,6 +319,11 @@ def update_lead_from_data(lead_id: int, data: dict) -> Lead:
         for data_key, model_key in field_mapping.items():
             value = data.get(data_key)
             if value is not None and value != "" and value != []:
+                # ИСПРАВЛЕНИЕ: extras - это список, конвертируем в JSON для SQLite
+                if model_key == "extras" and isinstance(value, list):
+                    import json
+                    value = json.dumps(value, ensure_ascii=False)
+                
                 current_value = getattr(lead, model_key, None)
                 if current_value != value:
                     setattr(lead, model_key, value)

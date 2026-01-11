@@ -43,46 +43,66 @@ class Agent:
         
         # Добавляем контекст собранного лида (для birthday ветки)
         if intent == "birthday" and lead_data:
-            collected = []
+            # НОВАЯ ЛОГИКА: Показываем структурированные данные как ИСТОЧНИК ИСТИНЫ
+            system_prompt += "\n\n" + "="*50
+            system_prompt += "\n📋 ТЕКУЩЕЕ СОСТОЯНИЕ ЗАЯВКИ (ИСТОЧНИК ИСТИНЫ)"
+            system_prompt += "\n" + "="*50
+            system_prompt += "\n\nИСПОЛЬЗУЙ ЭТИ ДАННЫЕ при подтверждении! НЕ ФАНТАЗИРУЙ!\n"
+            
+            # Основные данные
+            system_prompt += f"\n👤 Имя для связи: {lead_data.get('customer_name') or '❌ НЕ УКАЗАНО'}"
+            system_prompt += f"\n📞 Телефон: {lead_data.get('phone') or '❌ НЕ УКАЗАН'}"
+            system_prompt += f"\n📅 Дата праздника: {lead_data.get('event_date') or '❌ НЕ УКАЗАНА'}"
+            system_prompt += f"\n⏰ Время: {lead_data.get('time') or '❌ НЕ УКАЗАНО'}"
+            
+            # Гости
+            kids = lead_data.get('kids_count')
+            adults = lead_data.get('adults_count')
+            system_prompt += f"\n👶 Детей: {kids if kids else '❌ НЕ УКАЗАНО'}"
+            system_prompt += f"\n👨 Взрослых: {adults if adults else '❌ НЕ УКАЗАНО'}"
+            
+            # Именинник (опционально)
+            child_name = lead_data.get('child_name')
+            child_age = lead_data.get('child_age')
+            if child_name:
+                system_prompt += f"\n🎂 Именинник: {child_name}"
+                if child_age:
+                    system_prompt += f", {child_age} лет"
+            
+            # Комната и формат
+            room = lead_data.get('room')
+            format_type = lead_data.get('format')
+            if room:
+                system_prompt += f"\n🏠 Комната: {room}"
+            if format_type:
+                system_prompt += f"\n🎪 Формат: {format_type}"
+            
+            # Доп услуги
+            extras = lead_data.get('extras', [])
+            if extras and extras != '[]':
+                try:
+                    import json
+                    if isinstance(extras, str):
+                        extras = json.loads(extras)
+                    if extras:
+                        system_prompt += f"\n✨ Дополнительно: {', '.join(extras)}"
+                except:
+                    pass
+            
+            system_prompt += "\n" + "="*50
+            
+            # Определяем что ещё нужно собрать
             missing = []
-            
-            # Проверяем заполненные поля (в порядке сбора)
-            if lead_data.get("event_date"):
-                collected.append(f"- Дата праздника: {lead_data['event_date']}")
-            else:
+            if not lead_data.get("event_date"):
                 missing.append("Дата праздника")
-            
-            if lead_data.get("kids_count"):
-                collected.append(f"- Детей: {lead_data['kids_count']}")
-            else:
+            if not lead_data.get("kids_count"):
                 missing.append("Количество детей")
-            
-            if lead_data.get("time"):
-                collected.append(f"- Время: {lead_data['time']}")
-            else:
+            if not lead_data.get("time"):
                 missing.append("Время начала (10:30, 14:30 или 18:30)")
-            
-            if lead_data.get("room"):
-                collected.append(f"- Комната: {lead_data['room']}")
-            
-            if lead_data.get("customer_name"):
-                collected.append(f"- Имя для связи: {lead_data['customer_name']}")
-            else:
+            if not lead_data.get("customer_name"):
                 missing.append("Имя для связи")
-            
-            if lead_data.get("phone"):
-                collected.append(f"- Телефон: {lead_data['phone']}")
-            else:
+            if not lead_data.get("phone"):
                 missing.append("Номер телефона")
-            
-            # Опционально
-            if lead_data.get("child_name"):
-                collected.append(f"- Именинник: {lead_data['child_name']}")
-            if lead_data.get("child_age"):
-                collected.append(f"- Возраст: {lead_data['child_age']}")
-            
-            if collected:
-                system_prompt += f"\n\n--- УЖЕ СОБРАННЫЕ ДАННЫЕ ---\n" + "\n".join(collected)
             
             if missing:
                 # Указываем СЛЕДУЮЩИЙ КОНКРЕТНЫЙ вопрос
@@ -91,7 +111,12 @@ class Agent:
                 system_prompt += f"\nЕЩЁ НУЖНО УЗНАТЬ: {', '.join(missing[1:]) if len(missing) > 1 else 'ничего'}"
                 system_prompt += "\n\nНЕ ОТВЛЕКАЙСЯ на акции и каталоги пока не соберёшь ВСЕ данные!"
             else:
-                system_prompt += "\n\n✅ ВСЕ ДАННЫЕ СОБРАНЫ! Теперь сделай Саммари и подтверди передачу заявки."
+                system_prompt += "\n\n✅ ВСЕ ОБЯЗАТЕЛЬНЫЕ ДАННЫЕ СОБРАНЫ!"
+                system_prompt += "\n\n📝 ТВОЯ ЗАДАЧА:"
+                system_prompt += "\n1. Сформируй красивое подтверждение ИСПОЛЬЗУЯ данные выше"
+                system_prompt += "\n2. Укажи точную стоимость (рассчитай по ценам из базы знаний)"
+                system_prompt += "\n3. Спроси: 'Всё верно? Могу ли я передать заявку на бронирование?'"
+                system_prompt += "\n\n⚠️ КРИТИЧНО: Используй ТОЛЬКО данные из таблицы выше, не придумывай!"
         
         # Формируем сообщения
         messages = [{"role": "system", "content": system_prompt}]

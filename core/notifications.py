@@ -4,6 +4,8 @@ import aiohttp
 import logging
 from datetime import datetime
 
+from core.utils import format_phone
+
 logger = logging.getLogger(__name__)
 
 async def send_to_managers(text: str):
@@ -43,19 +45,21 @@ def format_lead_message(platform: str, user_id: str, lead_data: dict, username: 
         user_link = f"https://vk.com/id{user_id.replace('vk_', '')}"
         contact_info = f"<a href='{user_link}'>Открыть профиль</a>"
     else:
-        # Telegram: предпочтительно username, затем tg://user?id=
+        # Telegram: предпочтительно username; без username нет https-ссылки
         if username:
             user_link = f"https://t.me/{username}"
             contact_info = f"@{username} (<a href='{user_link}'>открыть</a>)"
         else:
-            user_link = f"tg://user?id={user_id}"
-            contact_info = f"<a href='{user_link}'>Открыть чат</a>"
+            contact_info = f"ID {user_id} (нет ссылки без username)"
     
     # Форматируем именинника
     child_info = lead_data.get('child_name', 'Не указан')
     if lead_data.get('child_age'):
         child_info += f", {lead_data.get('child_age')} лет"
         
+    raw_phone = lead_data.get('phone')
+    phone_text = format_phone(raw_phone) or (raw_phone if raw_phone else "🔥 НЕ УКАЗАН 🔥")
+
     msg = (
         f"🔥 <b>НОВАЯ ЗАЯВКА ({source})</b>\n\n"
         f"🎂 <b>Именинник:</b> {child_info}\n"
@@ -64,7 +68,7 @@ def format_lead_message(platform: str, user_id: str, lead_data: dict, username: 
         f"👥 <b>Гостей:</b> {lead_data.get('kids_count', '?')} дет. + {lead_data.get('adults_count', '?')} взр.\n"
         f"🏠 <b>Формат:</b> {lead_data.get('format', 'Не указан')}\n"
         f"👤 <b>Заказчик:</b> {lead_data.get('customer_name', 'Не указан')}\n"
-        f"📱 <b>Телефон:</b> {lead_data.get('phone', '🔥 НЕ УКАЗАН 🔥')}\n\n"
+        f"📱 <b>Телефон:</b> {phone_text}\n\n"
         f"🔗 <b>Профиль:</b> {contact_info}\n"
         f"🕒 <i>Создано: {datetime.now().strftime('%d.%m.%Y %H:%M')}</i>"
     )
@@ -80,11 +84,11 @@ def format_escalation_message(platform: str, user_id: str, username: str, user_n
         user_link = f"https://vk.com/id{user_id.replace('vk_', '')}"
         contact_info = f"<a href='{user_link}'>Открыть профиль VK</a>"
     else:
-        user_link = f"tg://user?id={user_id}"
         if username:
+            user_link = f"https://t.me/{username}"
             contact_info = f"@{username} (<a href='{user_link}'>открыть чат</a>)"
         else:
-            contact_info = f"<a href='{user_link}'>Открыть чат</a>"
+            contact_info = f"ID {user_id} (нет ссылки без username)"
     
     msg = (
         f"🆘 <b>ЗАПРОС ЖИВОГО МЕНЕДЖЕРА ({source})</b>\n\n"

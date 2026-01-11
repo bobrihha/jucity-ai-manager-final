@@ -15,6 +15,10 @@ DB_PATH = BASE_DIR / "data" / "bot.db"
 # Telegram
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
+# VK
+VK_TOKEN = os.getenv("VK_TOKEN", "")
+VK_GROUP_ID = os.getenv("VK_GROUP_ID", "")
+
 # OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")

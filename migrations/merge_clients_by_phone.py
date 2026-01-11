@@ -93,6 +93,10 @@ def merge_clients():
             if not master["username"] and dup["username"]:
                 updates.append("username = ?")
                 params.append(dup["username"])
+
+            if not master.get("customer_name") and dup.get("customer_name"):
+                updates.append("customer_name = ?")
+                params.append(dup["customer_name"])
                 
             if not master["first_name"] and dup["first_name"]:
                 updates.append("first_name = ?")

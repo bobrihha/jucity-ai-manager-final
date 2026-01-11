@@ -42,6 +42,7 @@ def backfill():
         if row["username"]:
             clients_map[tid]["username"] = row["username"]
         if row["customer_name"]:
+            clients_map[tid]["customer_name"] = row["customer_name"]
             # Простейшая эвристика имени
             parts = row["customer_name"].split()
             if len(parts) >= 1:
@@ -66,11 +67,12 @@ def backfill():
             # Можно обновить, но пока пропустим
         else:
             cursor.execute("""
-                INSERT INTO clients (telegram_id, username, first_name, last_name, phone)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO clients (telegram_id, username, customer_name, first_name, last_name, phone)
+                VALUES (?, ?, ?, ?, ?, ?)
             """, (
                 tid, 
                 data.get("username"), 
+                data.get("customer_name"),
                 data.get("first_name"), 
                 data.get("last_name"), 
                 data.get("phone")
@@ -93,16 +95,28 @@ def backfill():
                                (client_id, p_val, p_row["created_at"]))
 
         # 5. Добавляем детей из leads
-        cursor.execute("SELECT child_name, child_age FROM leads WHERE telegram_id = ? AND child_name IS NOT NULL", (tid,))
+        cursor.execute("SELECT child_name, child_age, event_date FROM leads WHERE telegram_id = ? AND child_name IS NOT NULL", (tid,))
         children = cursor.fetchall()
         for c_row in children:
             c_name = c_row["child_name"]
             c_age = c_row["child_age"]
-            # Простейшая проверка дубликатов по имени (не идеальна, но для старта пойдет)
-            cursor.execute("SELECT id FROM client_children WHERE client_id = ? AND name = ?", (client_id, c_name))
+            c_event_date = c_row["event_date"]
+            # Простейшая проверка дубликатов по имени и дате (если дата есть)
+            if c_event_date:
+                cursor.execute(
+                    "SELECT id FROM client_children WHERE client_id = ? AND name = ? AND event_date = ?",
+                    (client_id, c_name, c_event_date)
+                )
+            else:
+                cursor.execute(
+                    "SELECT id FROM client_children WHERE client_id = ? AND name = ? AND event_date IS NULL",
+                    (client_id, c_name)
+                )
             if not cursor.fetchone():
-                cursor.execute("INSERT INTO client_children (client_id, name, age) VALUES (?, ?, ?)", 
-                               (client_id, c_name, c_age))
+                cursor.execute(
+                    "INSERT INTO client_children (client_id, name, event_date, age) VALUES (?, ?, ?, ?)", 
+                    (client_id, c_name, c_event_date, c_age)
+                )
 
     conn.commit()
     conn.close()

@@ -18,7 +18,9 @@ def migrate():
     CREATE TABLE IF NOT EXISTS clients (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         telegram_id VARCHAR(50) UNIQUE,
+        vk_id VARCHAR(50) UNIQUE,
         username VARCHAR(100),
+        customer_name VARCHAR(100),
         first_name VARCHAR(100),
         last_name VARCHAR(100),
         phone VARCHAR(20),
@@ -29,8 +31,9 @@ def migrate():
     """)
     print("✅ Created/Verified 'clients' table")
     
-    # Индекс для clients.telegram_id
+    # Индексы для clients
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_clients_telegram_id ON clients (telegram_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_clients_vk_id ON clients (vk_id)")
 
     # 2. Таблица client_phones
     cursor.execute("""
@@ -50,6 +53,7 @@ def migrate():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         client_id INTEGER,
         name VARCHAR(100),
+        event_date VARCHAR(20),
         birth_date DATE,
         age INTEGER,
         FOREIGN KEY(client_id) REFERENCES clients(id)

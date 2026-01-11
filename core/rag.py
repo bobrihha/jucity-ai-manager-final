@@ -108,7 +108,7 @@ class RAGSystem:
         
         count = 0
         
-        for category in ["general", "birthday", "shared"]:
+        for category in ["general", "birthday", "shared", "events"]:
             category_path = knowledge_path / category
             if not category_path.exists():
                 continue

@@ -75,7 +75,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-from core.utils import get_prices_from_knowledge
+from core.utils import get_prices_from_knowledge, get_afisha_events
 
 
 async def prices_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -365,15 +365,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
             
-            # Отправляем фото с текстом
-            caption = (
+            # Отправляем фото с текстом (динамически из afisha.txt)
+            caption = get_afisha_events() or (
                 "🎪 Афиша Джунгли Сити!\n\n"
-                "У нас постоянно проходят интересные события:\n"
-                "• Шоу-программы\n"
-                "• Мастер-классы\n"
-                "• Дискотеки\n"
-                "• Праздничные мероприятия\n\n"
-                "Спрашивайте, что будет на этих выходных! 🌟"
+                "Следите за нашими событиями:\n"
+                "👉 nn.jucity.ru/afisha/"
             )
             with open(IMAGES["events"], 'rb') as photo_file:
                 await context.bot.send_photo(

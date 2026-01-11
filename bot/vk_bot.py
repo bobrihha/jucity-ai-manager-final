@@ -38,6 +38,7 @@ from core.lead_service import (
     mark_lead_sent_to_manager,
     lead_to_dict
 )
+from core.utils import get_afisha_events
 
 
 def create_vk_bot(token: str, group_id: int):
@@ -162,15 +163,11 @@ def create_vk_bot(token: str, group_id: int):
         finally:
             db.close()
         
-        # Загружаем и отправляем фото с текстом
-        text = (
+        # Загружаем и отправляем фото с текстом (динамически из afisha.txt)
+        text = get_afisha_events() or (
             "🎪 Афиша Джунгли Сити!\n\n"
-            "У нас постоянно проходят интересные события:\n"
-            "• Шоу-программы\n"
-            "• Мастер-классы\n"
-            "• Дискотеки\n"
-            "• Праздничные мероприятия\n\n"
-            "Спрашивайте, что будет на этих выходных! 🌟"
+            "Следите за нашими событиями:\n"
+            "👉 nn.jucity.ru/afisha/"
         )
         attachment = await upload_photo_from_file(IMAGES["events"], message.peer_id)
         if attachment:

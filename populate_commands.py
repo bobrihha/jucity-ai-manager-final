@@ -134,6 +134,24 @@ def populate():
 Хотите забронировать со скидкой? Напишите /birthday""",
              "order": 8
         },
+        {
+            "command": "start",
+            "title": "🏠 Главное меню",
+            "response": "Start command logic is handled by code.",
+            "order": 0
+        },
+        {
+            "command": "birthday",
+            "title": "🎂 День рождения",
+            "response": "Birthday logic is handled by code.",
+            "order": 5
+        },
+        {
+            "command": "human",
+            "title": "👤 Менеджер",
+            "response": "Human escalation logic.",
+            "order": 9
+        },
     ]
 
     for data in commands:
@@ -145,10 +163,13 @@ def populate():
                 response=data["response"],
                 order=data["order"],
                 is_active=True,
-                has_logic=False
+                has_logic=True # Это специальные команды
             )
             db.add(cmd)
             print(f"Added command /{data['command']}")
+        else:
+             # Если команда есть, но мы хотим обновить has_logic или title (опционально)
+             pass
     
     db.commit()
     db.close()

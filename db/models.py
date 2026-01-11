@@ -47,6 +47,7 @@ class Client(Base):
     telegram_id = Column(String(50), unique=True, index=True)
     vk_id = Column(String(50), unique=True, index=True)  # New field
     username = Column(String(100))
+    customer_name = Column(String(100))  # имя, которое сообщил клиент
     first_name = Column(String(100))
     last_name = Column(String(100))
     phone = Column(String(20))  # Основной телефон
@@ -80,6 +81,7 @@ class ClientChild(Base):
     id = Column(Integer, primary_key=True)
     client_id = Column(Integer, ForeignKey("clients.id"))
     name = Column(String(100))
+    event_date = Column(String(20))  # дата праздника из заявки
     birth_date = Column(Date)
     age = Column(Integer)
     
