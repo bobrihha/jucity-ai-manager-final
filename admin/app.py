@@ -12,6 +12,7 @@ import os
 
 from db import init_db, SessionLocal, Document, Lead, Session as DBSession, Message, BotCommand, Client, ClientPhone, ClientChild
 from core.rag import RAGSystem
+from core.utils import format_phone
 
 # Инициализация
 init_db()
@@ -27,6 +28,13 @@ st.set_page_config(
 # Сайдбар для навигации
 if "page_nav" not in st.session_state:
     st.session_state.page_nav = "🎯 Заявки"
+
+if "force_page" in st.session_state:
+    st.session_state.page_nav = st.session_state.force_page
+    st.session_state.page_selector = st.session_state.force_page
+    del st.session_state.force_page
+elif "page_selector" not in st.session_state:
+    st.session_state.page_selector = st.session_state.page_nav
 
 def on_page_change():
     st.session_state.page_nav = st.session_state.page_selector
@@ -46,7 +54,10 @@ page = st.sidebar.selectbox(
 if page == "👥 Клиенты":
     st.header("👥 База клиентов (CRM)")
     
-    search_query = st.text_input("🔍 Поиск клиента (имя, телефон, username, ID)", "")
+    # Поддерживаем поиск из session_state (для перехода из заявки)
+    default_search = st.session_state.pop("client_search", "")
+    
+    search_query = st.text_input("🔍 Поиск клиента (имя, телефон, username, ID)", value=default_search)
     
     db = SessionLocal()
     query = db.query(Client).order_by(Client.total_leads.desc())
@@ -54,11 +65,13 @@ if page == "👥 Клиенты":
     if search_query:
         search = f"%{search_query}%"
         query = query.filter(
+            (Client.customer_name.ilike(search)) |
             (Client.first_name.ilike(search)) |
             (Client.last_name.ilike(search)) |
             (Client.username.ilike(search)) |
             (Client.phone.ilike(search)) |
-            (Client.telegram_id.ilike(search))
+            (Client.telegram_id.ilike(search)) |
+            (Client.vk_id.ilike(search))
         )
     
     clients = query.limit(50).all()
@@ -67,54 +80,147 @@ if page == "👥 Клиенты":
         st.write(f"Найдено клиентов: {len(clients)}")
         for client in clients:
              # Имя для отображения
-            display_name = f"{client.first_name or ''} {client.last_name or ''}".strip()
+            display_name = client.customer_name or f"{client.first_name or ''} {client.last_name or ''}".strip()
             if not display_name:
-                display_name = f"@{client.username}" if client.username else f"ID {client.telegram_id}"
-            
-            with st.expander(f"👤 {display_name} | 📞 {client.phone or '-'} | Заявок: {client.total_leads}"):
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.markdown("### 📋 Данные клиента")
-                    st.write(f"**ID:** `{client.telegram_id}`")
-                    st.write(f"**Username:** @{client.username}" if client.username else "**Username:** -")
-                    st.write(f"**Имя:** {client.first_name or '-'}")
-                    st.write(f"**Фамилия:** {client.last_name or '-'}")
-                    st.write(f"**Телефон (осн):** {client.phone or '-'}")
-                    
-                    st.markdown("#### 📜 История телефонов")
-                    phones = db.query(ClientPhone).filter(ClientPhone.client_id == client.id).all()
-                    if phones:
-                        for p in phones:
-                            st.write(f"- {p.phone} (был {p.last_used_at.strftime('%d.%m.%Y')})")
-                    else:
-                        st.write("Нет дополнительных телефонов")
-                        
-                with c2:
-                    st.markdown("### 👶 Дети")
-                    children = db.query(ClientChild).filter(ClientChild.client_id == client.id).all()
-                    if children:
-                        for child in children:
-                            st.write(f"- 👶 **{child.name}** {f'({child.age} лет)' if child.age else ''}")
-                    else:
-                        st.write("Нет данных о детях")
-                        
-                    st.markdown("### 📊 Статистика")
-                    st.metric("Всего заявок", client.total_leads)
-                    
-                    if st.button("💬 Переписка", key=f"chat_cl_{client.id}"):
-                        st.session_state.filter_user_id = client.telegram_id
-                        st.session_state.page_nav = "💬 Диалоги"
-                        st.rerun()
-
-                st.divider()
-                st.markdown("### 📅 История заявок")
-                client_leads = db.query(Lead).filter(Lead.client_id == client.id).order_by(Lead.created_at.desc()).all()
-                if client_leads:
-                    for l in client_leads:
-                        status_em = {"new": "🔴", "contacted": "🟡", "booked": "🟢", "cancelled": "⚫"}.get(l.status, "⚪")
-                        st.write(f"{status_em} **{l.event_date or '?'}** — {l.format or '-'} ({l.kids_count} дет.)")
+                if client.username:
+                    display_name = f"@{client.username}"
+                elif client.telegram_id:
+                    display_name = f"ID {client.telegram_id}"
+                elif client.vk_id:
+                    display_name = f"VK {client.vk_id}"
                 else:
-                    st.write("Заявок в истории не найдено (возможно, старые не привязались).")
+                    display_name = "Без имени"
+            
+            display_phone = format_phone(client.phone) or "-"
+            vk_id_value = client.vk_id or (client.telegram_id if client.telegram_id and str(client.telegram_id).startswith("vk_") else None)
+            tg_id_value = client.telegram_id if client.telegram_id and not str(client.telegram_id).startswith("vk_") else None
+
+            with st.expander(f"👤 {display_name} | 📞 {display_phone} | Заявок: {client.total_leads}"):
+                # Редактирование клиента
+                if st.button("✏️ Редактировать", key=f"edit_client_{client.id}"):
+                    st.session_state[f"editing_client_{client.id}"] = True
+                
+                if st.session_state.get(f"editing_client_{client.id}", False):
+                    with st.form(key=f"client_edit_form_{client.id}"):
+                        st.markdown("### ✏️ Редактирование данных")
+                        
+                        col_e1, col_e2 = st.columns(2)
+                        with col_e1:
+                            edit_customer_name = st.text_input("Имя (из заявки)", value=client.customer_name or "")
+                            edit_first_name = st.text_input("Имя (соцсеть)", value=client.first_name or "")
+                            edit_last_name = st.text_input("Фамилия (соцсеть)", value=client.last_name or "")
+                        with col_e2:
+                            edit_username = st.text_input("Username", value=client.username or "")
+                            edit_phone = st.text_input("Основной телефон", value=client.phone or "")
+                        
+                        col_btn1, col_btn2 = st.columns(2)
+                        with col_btn1:
+                            if st.form_submit_button("💾 Сохранить"):
+                                client.customer_name = edit_customer_name.strip() if edit_customer_name else None
+                                client.first_name = edit_first_name.strip() if edit_first_name else None
+                                client.last_name = edit_last_name.strip() if edit_last_name else None
+                                client.username = edit_username.strip() if edit_username else None
+                                if edit_phone:
+                                    from core.lead_service import normalize_phone
+                                    normalized = normalize_phone(edit_phone)
+                                    if normalized:
+                                        client.phone = normalized
+                                
+                                db.commit()
+                                st.session_state[f"editing_client_{client.id}"] = False
+                                st.success("Сохранено!")
+                                st.rerun()
+                        
+                        with col_btn2:
+                            if st.form_submit_button("❌ Отмена"):
+                                st.session_state[f"editing_client_{client.id}"] = False
+                                st.rerun()
+                else:
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.markdown("### 📋 Данные клиента")
+                        st.write(f"**Telegram ID:** `{tg_id_value}`" if tg_id_value else "**Telegram ID:** -")
+                        st.write(f"**VK ID:** `{vk_id_value}`" if vk_id_value else "**VK ID:** -")
+                        st.write(f"**Username:** @{client.username}" if client.username else "**Username:** -")
+                        st.write(f"**Имя (из заявки):** {client.customer_name or '-'}")
+                        social_name = f"{client.first_name or ''} {client.last_name or ''}".strip()
+                        st.write(f"**Имя из соцсети:** {social_name or '-'}")
+                        st.write(f"**Телефон (осн):** {display_phone}")
+
+                        tg_link = None
+                        tg_label = None
+                        if client.username:
+                            tg_label = f"@{client.username}"
+                            tg_link = f"https://t.me/{client.username}"
+                        elif tg_id_value:
+                            tg_label = f"ID {tg_id_value}"
+
+                        vk_link = None
+                        vk_label = None
+                        if vk_id_value:
+                            vk_id = str(vk_id_value).replace("vk_", "")
+                            vk_label = f"id{vk_id}"
+                            vk_link = f"https://vk.com/id{vk_id}"
+
+                        if tg_label or vk_link:
+                            st.markdown("#### 🔗 Ссылки")
+                            if tg_link:
+                                st.markdown(f"- [Telegram: {tg_label}]({tg_link})")
+                            elif tg_label:
+                                st.markdown(f"- Telegram: {tg_label} (нет ссылки без username)")
+                            if vk_link:
+                                st.markdown(f"- [VK: {vk_label}]({vk_link})")
+                        
+                        st.markdown("#### 📜 История телефонов")
+                        phones = db.query(ClientPhone).filter(ClientPhone.client_id == client.id).all()
+                        if phones:
+                            for p in phones:
+                                phone_text = format_phone(p.phone) or p.phone or "-"
+                                st.write(f"- {phone_text} (был {p.last_used_at.strftime('%d.%m.%Y')})")
+                        else:
+                            st.write("Нет дополнительных телефонов")
+                            
+                    with c2:
+                        st.markdown("### 👶 Дети")
+                        children = db.query(ClientChild).filter(ClientChild.client_id == client.id).order_by(ClientChild.name).all()
+                        if children:
+                            grouped = {}
+                            for child in children:
+                                entry = grouped.setdefault(child.name, {"dates": [], "ages": set()})
+                                if child.event_date and child.event_date not in entry["dates"]:
+                                    entry["dates"].append(child.event_date)
+                                if child.age:
+                                    entry["ages"].add(child.age)
+
+                            for name in sorted(grouped.keys()):
+                                entry = grouped[name]
+                                ages = ", ".join(str(a) for a in sorted(entry["ages"])) if entry["ages"] else ""
+                                ages_text = f" ({ages} лет)" if ages else ""
+                                dates_text = ", ".join(entry["dates"]) if entry["dates"] else "-"
+                                st.write(f"- 👶 **{name}**{ages_text} — даты: {dates_text}")
+                        else:
+                            st.write("Нет данных о детях")
+                            
+                        st.markdown("### 📊 Статистика")
+                        st.metric("Всего заявок", client.total_leads)
+                        
+                        if st.button("💬 Переписка", key=f"chat_cl_{client.id}"):
+                            st.session_state.filter_user_id = tg_id_value or vk_id_value
+                            st.session_state.force_page = "💬 Диалоги"
+                            st.rerun()
+
+                    st.divider()
+                    st.markdown("### 📅 История заявок")
+                    client_leads = db.query(Lead).filter(Lead.client_id == client.id).order_by(Lead.created_at.desc()).all()
+                    if client_leads:
+                        for l in client_leads:
+                            status_em = {"new": "🔴", "contacted": "🟡", "booked": "🟢", "cancelled": "⚫"}.get(l.status, "⚪")
+                            lead_info = f"{status_em} **{l.event_date or '?'}** — {l.format or '-'} ({l.kids_count or 0} дет.)"
+                            if l.customer_name:
+                                lead_info += f" — {l.customer_name}"
+                            st.write(lead_info)
+                    else:
+                        st.write("Заявок в истории не найдено.")
 
     else:
         st.info("Клиенты не найдены.")
@@ -187,7 +293,7 @@ elif page == "🎯 Заявки":
             
             # Определяем источник и создаем ссылку
             source_icon = "📱"
-            user_link = "#"
+            user_link = None
             if lead.source == "vk" or str(lead.telegram_id).startswith("vk_"):
                 vk_id = str(lead.telegram_id).replace("vk_", "")
                 user_link = f"https://vk.com/id{vk_id}"
@@ -197,7 +303,6 @@ elif page == "🎯 Заявки":
                     user_link = f"https://t.me/{lead.username}"
                     source_icon = "✈️ TG"
                 else:
-                    user_link = f"tg://user?id={lead.telegram_id}"
                     source_icon = "✈️ TG (ID)"
 
             with st.expander(f"{status_emoji} {lead.customer_name or 'Без имени'} | {lead.event_date or 'Дата не указана'}"):
@@ -205,11 +310,14 @@ elif page == "🎯 Заявки":
                 # --- БЛОК 1: Основные действия ---
                 col_act1, col_act2, col_act3 = st.columns([1, 1, 2])
                 with col_act1:
-                    st.markdown(f"**[{source_icon} Профиль]({user_link})**")
+                    if user_link:
+                        st.markdown(f"**[{source_icon} Профиль]({user_link})**")
+                    else:
+                        st.markdown(f"**{source_icon} Telegram ID: {lead.telegram_id}**")
                 with col_act2:
                     if st.button("📜 Переписка", key=f"hist_{lead.id}"):
                         st.session_state.filter_user_id = lead.telegram_id
-                        st.session_state.page_nav = "💬 Диалоги"
+                        st.session_state.force_page = "💬 Диалоги"
                         st.rerun()
                 
                 st.divider()
@@ -251,8 +359,59 @@ elif page == "🎯 Заявки":
                         lead.notes = new_notes
                         lead.status = new_status
                         
+                        # СИНХРОНИЗАЦИЯ С КАРТОЧКОЙ КЛИЕНТА
+                        if lead.client_id:
+                            client = db.query(Client).filter(Client.id == lead.client_id).first()
+                            if client:
+                                # Обновляем имя клиента
+                                if new_name and client.customer_name != new_name:
+                                    client.customer_name = new_name
+                                
+                                # Обновляем телефон
+                                if new_phone:
+                                    from core.lead_service import normalize_phone
+                                    norm_phone = normalize_phone(new_phone)
+                                    if norm_phone:
+                                        # Обновляем основной, если не был
+                                        if not client.phone:
+                                            client.phone = norm_phone
+                                        # Добавляем в историю если нового
+                                        existing_ph = db.query(ClientPhone).filter(
+                                            ClientPhone.client_id == client.id,
+                                            ClientPhone.phone == norm_phone
+                                        ).first()
+                                        if not existing_ph:
+                                            db.add(ClientPhone(
+                                                client_id=client.id,
+                                                phone=norm_phone
+                                            ))
+                                
+                                # Обновляем ребенка
+                                if new_child:
+                                    existing_child = db.query(ClientChild).filter(
+                                        ClientChild.client_id == client.id,
+                                        ClientChild.name == new_child,
+                                        ClientChild.event_date == new_date
+                                    ).first()
+                                    if not existing_child:
+                                        db.add(ClientChild(
+                                            client_id=client.id,
+                                            name=new_child,
+                                            event_date=new_date,
+                                            age=new_age
+                                        ))
+                        
                         db.commit()
-                        st.success("Данные обновлены!")
+                        st.success("Данные обновлены и синхронизированы с карточкой клиента!")
+                        st.rerun()
+                
+                # Ссылка на карточку клиента
+                if lead.client_id:
+                    if st.button("👤 Открыть карточку клиента", key=f"client_card_{lead.id}"):
+                        st.session_state.filter_user_id = ""  # Сброс фильтра
+                        st.session_state.force_page = "👥 Клиенты"
+                        # Установим поиск по ID клиента
+                        st.session_state.client_search = str(lead.client_id)
                         st.rerun()
     else:
         st.info("Заявок пока нет.")

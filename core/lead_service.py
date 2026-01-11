@@ -17,19 +17,136 @@ def normalize_phone(phone: str) -> Optional[str]:
     """Нормализация телефона: оставляет только цифры, берет последние 10."""
     if not phone:
         return None
-    # Оставляем только цифры
     digits = re.sub(r"\D", "", str(phone))
     if not digits:
         return None
-    # Берем последние 10 цифр (без 8 или 7)
     if len(digits) >= 10:
         return digits[-10:]
     return digits
 
 
+def normalize_contact_ids(telegram_id: Optional[str], vk_id: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Привести ID в корректный вид (не хранить VK в telegram_id)."""
+    if telegram_id and str(telegram_id).startswith("vk_"):
+        if not vk_id:
+            vk_id = telegram_id
+        telegram_id = None
+    return telegram_id, vk_id
+
+
+def client_priority(client: Client) -> tuple:
+    """Приоритет клиента при объединении: больше данных -> выше."""
+    return (
+        1 if client.telegram_id else 0,
+        1 if client.vk_id else 0,
+        1 if getattr(client, "customer_name", None) else 0,
+        1 if client.username else 0,
+        1 if (client.first_name or client.last_name) else 0,
+        -(client.id or 0),
+    )
+
+
+def get_clients_by_phone(db, norm_phone: str, exclude_client_id: Optional[int] = None) -> list[Client]:
+    """Найти всех клиентов по нормализованному телефону."""
+    if not norm_phone:
+        return []
+
+    client_ids = set()
+
+    phone_rows = db.query(ClientPhone).filter(ClientPhone.phone.contains(norm_phone)).all()
+    for row in phone_rows:
+        if exclude_client_id and row.client_id == exclude_client_id:
+            continue
+        client_ids.add(row.client_id)
+
+    client_rows = db.query(Client).filter(Client.phone.contains(norm_phone)).all()
+    for row in client_rows:
+        if exclude_client_id and row.id == exclude_client_id:
+            continue
+        client_ids.add(row.id)
+
+    if not client_ids:
+        phone_rows = db.query(ClientPhone).all()
+        for row in phone_rows:
+            if normalize_phone(row.phone) == norm_phone:
+                if exclude_client_id and row.client_id == exclude_client_id:
+                    continue
+                client_ids.add(row.client_id)
+
+        client_rows = db.query(Client).filter(Client.phone.isnot(None)).all()
+        for row in client_rows:
+            if normalize_phone(row.phone) == norm_phone:
+                if exclude_client_id and row.id == exclude_client_id:
+                    continue
+                client_ids.add(row.id)
+
+    if not client_ids:
+        return []
+
+    return db.query(Client).filter(Client.id.in_(client_ids)).all()
+
+
+def merge_clients(db, master: Client, dup: Client) -> Client:
+    """Объединить два клиента, сохранив master."""
+    if master.id == dup.id:
+        return master
+
+    master_tg, master_vk = normalize_contact_ids(master.telegram_id, master.vk_id)
+    if master.telegram_id != master_tg:
+        master.telegram_id = master_tg
+    if master.vk_id != master_vk:
+        master.vk_id = master_vk
+
+    dup_tg, dup_vk = normalize_contact_ids(dup.telegram_id, dup.vk_id)
+
+    # Переносим связи
+    db.query(Lead).filter(Lead.client_id == dup.id).update(
+        {Lead.client_id: master.id}, synchronize_session=False
+    )
+    db.query(ClientChild).filter(ClientChild.client_id == dup.id).update(
+        {ClientChild.client_id: master.id}, synchronize_session=False
+    )
+    db.query(ClientPhone).filter(ClientPhone.client_id == dup.id).update(
+        {ClientPhone.client_id: master.id}, synchronize_session=False
+    )
+
+    # Объединяем данные
+    if not master.telegram_id and dup_tg:
+        master.telegram_id = dup_tg
+    if not master.vk_id and dup_vk:
+        master.vk_id = dup_vk
+    if not master.username and dup.username:
+        master.username = dup.username
+    if not master.customer_name and getattr(dup, "customer_name", None):
+        master.customer_name = dup.customer_name
+    if not master.first_name and dup.first_name:
+        master.first_name = dup.first_name
+    if not master.last_name and dup.last_name:
+        master.last_name = dup.last_name
+    if not master.phone and dup.phone:
+        master.phone = dup.phone
+    if dup.phone:
+        existing = db.query(ClientPhone).filter(
+            ClientPhone.client_id == master.id,
+            ClientPhone.phone == dup.phone
+        ).first()
+        if not existing:
+            db.add(ClientPhone(client_id=master.id, phone=dup.phone))
+
+    master.updated_at = datetime.utcnow()
+
+    # Обновляем счетчик
+    master.total_leads = db.query(Lead).filter(Lead.client_id == master.id).count()
+
+    db.delete(dup)
+    return master
+
+
 def ensure_client(db, telegram_id: str = None, vk_id: str = None, username: str = None, phone: str = None, first_name: str = None, last_name: str = None) -> Client:
     """Гарантировать существование клиента. Ищет по ID или телефону. Объединяет если находит."""
     client = None
+    telegram_id, vk_id = normalize_contact_ids(telegram_id, vk_id)
+    stored_phone = normalize_phone(phone) if phone else None
     
     # 1. Поиск по ID
     if telegram_id:
@@ -38,25 +155,11 @@ def ensure_client(db, telegram_id: str = None, vk_id: str = None, username: str 
         client = db.query(Client).filter(Client.vk_id == str(vk_id)).first()
         
     # 2. Поиск по телефону (если не нашли по ID, но есть телефон)
-    norm_phone = normalize_phone(phone)
-    if not client and norm_phone:
-        # Ищем в основных телефонах
-        # Тут нюанс: в базе телефоны могут быть разные. 
-        # Упрощение: ищем точное совпадение последних 10 цифр в строке (LIKE)
-        # Или лучше пройтись по всем и нормализовать? Это медленно.
-        # Пока ищем по точному совпадению или по client_phones
-        
-        # Поиск в таблице истории телефонов (с нормализацией на лету сложно, ищем like)
-        # Предполагаем что телефоны сохраняются более-менее чистыми, или ищем по подстроке
-        phone_match = db.query(ClientPhone).filter(ClientPhone.phone.contains(norm_phone)).first()
-        if phone_match:
-            client = phone_match.client
-        
-        # Или в основной таблице
-        if not client:
-            client_match = db.query(Client).filter(Client.phone.contains(norm_phone)).first()
-            if client_match:
-                client = client_match
+    if not client and stored_phone:
+        phone_matches = get_clients_by_phone(db, stored_phone)
+        if phone_matches:
+            phone_matches.sort(key=client_priority, reverse=True)
+            client = phone_matches[0]
     
     # 3. Создание или обновление
     if not client:
@@ -67,14 +170,14 @@ def ensure_client(db, telegram_id: str = None, vk_id: str = None, username: str 
             username=username,
             first_name=first_name,
             last_name=last_name,
-            phone=phone
+            phone=stored_phone
         )
         db.add(client)
         db.commit()
         db.refresh(client)
-        if phone:
+        if stored_phone:
             # Сразу добавляем телефон в историю
-            db.add(ClientPhone(client_id=client.id, phone=phone))
+            db.add(ClientPhone(client_id=client.id, phone=stored_phone))
             db.commit()
             
         logger.info(f"Created new Client #{client.id} (tg={telegram_id}, vk={vk_id})")
@@ -103,17 +206,20 @@ def ensure_client(db, telegram_id: str = None, vk_id: str = None, username: str 
         if last_name and not client.last_name:
             client.last_name = last_name
             changed = True
-        if phone:
+        if stored_phone:
             # Если телефон новый -> добавляем в историю
-            if client.phone != phone:
+            if client.phone != stored_phone:
                 # Проверяем нет ли его уже
-                existing = db.query(ClientPhone).filter(ClientPhone.client_id == client.id, ClientPhone.phone == phone).first()
+                existing = db.query(ClientPhone).filter(
+                    ClientPhone.client_id == client.id,
+                    ClientPhone.phone == stored_phone
+                ).first()
                 if not existing:
-                    db.add(ClientPhone(client_id=client.id, phone=phone))
+                    db.add(ClientPhone(client_id=client.id, phone=stored_phone))
                     db.commit() # Сохраняем телефон отдельно
                 
             if not client.phone:
-                client.phone = phone
+                client.phone = stored_phone
                 changed = True
             
         if changed:
@@ -183,6 +289,16 @@ def update_lead_from_data(lead_id: int, data: dict) -> Lead:
         if not lead:
             logger.error(f"Lead #{lead_id} not found!")
             return None
+
+        raw_phone = data.get("phone")
+        if raw_phone:
+            normalized_phone = normalize_phone(raw_phone)
+            if normalized_phone:
+                data["phone"] = normalized_phone
+
+        customer_name = data.get("customer_name")
+        if customer_name:
+            data["customer_name"] = customer_name.strip()
         
         # Маппинг полей
         field_mapping = {
@@ -215,9 +331,20 @@ def update_lead_from_data(lead_id: int, data: dict) -> Lead:
             if lead.client_id:
                 client = db.query(Client).filter(Client.id == lead.client_id).first()
                 if client:
+                    # 0. Обновляем имя клиента, если оно указано в заявке
+                    new_customer_name = data.get("customer_name")
+                    if new_customer_name and client.customer_name != new_customer_name:
+                        client.customer_name = new_customer_name
+
                     # 1. Если обновился телефон
                     new_phone = data.get("phone")
                     if new_phone:
+                        # Нормализуем существующий основной телефон
+                        if client.phone:
+                            client_phone_norm = normalize_phone(client.phone)
+                            if client_phone_norm and client.phone != client_phone_norm:
+                                client.phone = client_phone_norm
+
                         # Обновляем основной телефон если не был задан
                         if not client.phone:
                             client.phone = new_phone
@@ -236,18 +363,49 @@ def update_lead_from_data(lead_id: int, data: dict) -> Lead:
                             # Обновляем дату использования
                             existing_phone.last_used_at = datetime.utcnow()
 
+                        # 1.1 Онлайн-объединение по телефону
+                        norm_phone = normalize_phone(new_phone)
+                        if norm_phone:
+                            matches = get_clients_by_phone(db, norm_phone, exclude_client_id=client.id)
+                            for other in matches:
+                                master = client
+                                dup = other
+                                if client_priority(other) > client_priority(client):
+                                    master, dup = other, client
+                                master = merge_clients(db, master, dup)
+                                client = master
+                                if lead.client_id != master.id:
+                                    lead.client_id = master.id
+
                     # 2. Если обновился ребенок
                     new_child = data.get("child_name")
                     new_age = data.get("child_age")
+                    new_event_date = data.get("event_date")
                     if new_child:
-                        # Проверяем есть ли такой ребенок
-                        existing_child = db.query(ClientChild).filter(
+                        # Проверяем есть ли такой ребенок с той же датой
+                        child_query = db.query(ClientChild).filter(
                              ClientChild.client_id == client.id,
                              ClientChild.name == new_child
-                        ).first()
+                        )
+                        if new_event_date:
+                            child_query = child_query.filter(ClientChild.event_date == new_event_date)
+                        else:
+                            child_query = child_query.filter(ClientChild.event_date.is_(None))
+
+                        existing_child = child_query.first()
+
+                        # Если даты нет в записи, но она появилась — обновим её
+                        if not existing_child and new_event_date:
+                            existing_child = db.query(ClientChild).filter(
+                                ClientChild.client_id == client.id,
+                                ClientChild.name == new_child,
+                                ClientChild.event_date.is_(None)
+                            ).first()
+                            if existing_child:
+                                existing_child.event_date = new_event_date
                         
                         if not existing_child:
-                            db.add(ClientChild(client_id=client.id, name=new_child, age=new_age))
+                            db.add(ClientChild(client_id=client.id, name=new_child, event_date=new_event_date, age=new_age))
                         elif new_age:
                             # Обновляем возраст если изменился
                             existing_child.age = new_age
