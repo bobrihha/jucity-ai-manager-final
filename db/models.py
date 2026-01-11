@@ -39,11 +39,58 @@ class Message(Base):
     session = relationship("Session", back_populates="messages")
 
 
+class Client(Base):
+    """Карточка клиента."""
+    __tablename__ = "clients"
+    
+    id = Column(Integer, primary_key=True)
+    telegram_id = Column(String(50), unique=True, index=True)
+    username = Column(String(100))
+    first_name = Column(String(100))
+    last_name = Column(String(100))
+    phone = Column(String(20))  # Основной телефон
+    
+    total_leads = Column(Integer, default=0)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    leads = relationship("Lead", back_populates="client")
+    phones = relationship("ClientPhone", back_populates="client")
+    children = relationship("ClientChild", back_populates="client")
+
+
+class ClientPhone(Base):
+    """Телефоны клиента."""
+    __tablename__ = "client_phones"
+    
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id"))
+    phone = Column(String(20))
+    last_used_at = Column(DateTime, default=datetime.utcnow)
+    
+    client = relationship("Client", back_populates="phones")
+
+
+class ClientChild(Base):
+    """Дети клиента."""
+    __tablename__ = "client_children"
+    
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id"))
+    name = Column(String(100))
+    birth_date = Column(Date)
+    age = Column(Integer)
+    
+    client = relationship("Client", back_populates="children")
+
+
 class Lead(Base):
     """Лид (заявка на праздник)."""
     __tablename__ = "leads"
     
     id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id"))  # Ссылка на клиента
     telegram_id = Column(String(50), index=True)  # или vk_123456
     username = Column(String(100))  # telegram username
     park_id = Column(String(10), default="nn")
@@ -56,21 +103,51 @@ class Lead(Base):
     # Данные праздника
     child_name = Column(String(100))
     child_age = Column(Integer)
-    event_date = Column(String(50))
-    time = Column(String(20))  # 10:30, 14:30, 18:30
-    room = Column(String(50))  # Опушка, Поляна Чудес и т.д.
-    kids_count = Column(Integer)
-    adults_count = Column(Integer)
-    format = Column(String(20))  # room, restaurant, unknown
-    extras = Column(JSON, default=list)  # аниматор, торт, шары...
+    event_date = Column(String(20))  # строка пока так проще
+    time = Column(String(20))
     
-    # Статус
+    # Детали
+    kids_count = Column(Integer, default=0)
+    adults_count = Column(Integer, default=0)
+    format = Column(String(50))  # room_rent, turnkey, etc
+    room = Column(String(50))
+    extras = Column(Text)  # JSON or text list of extras
+    
     status = Column(String(20), default="new")  # new, contacted, booked, cancelled
-    notes = Column(Text)
+    notes = Column(Text)  # Комментарий менеджера
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Флаги
     sent_to_manager = Column(Boolean, default=False)
+    
+    client = relationship("Client", back_populates="leads")
+    
+    def get_summary(self):
+        """Вернуть краткую информацию о заявке."""
+        extras_text = ""
+        if self.extras:
+            # extras может быть JSON строкой или списком
+            try:
+                import json
+                extras_list = json.loads(self.extras) if isinstance(self.extras, str) else self.extras
+                if extras_list:
+                    extras_text = f"\n🎁 Доп. услуги: {', '.join(extras_list)}"
+            except:
+                extras_text = f"\n🎁 Доп. услуги: {self.extras}"
+
+        return (
+            f"📋 <b>Новая заявка #{self.id}</b>\n"
+            f"👤 Имя: {self.customer_name or 'Не указано'}\n"
+            f"📞 Телефон: {self.phone or 'Не указан'}\n"
+            f"👶 Именинник: {self.child_name or '-'} ({self.child_age or '?'} лет)\n"
+            f"📅 Дата: {self.event_date or 'Не выбрана'} {self.time or ''}\n"
+            f"📍 Формат: {self.format or 'Не выбран'}\n"
+            f"👥 Гости: {self.kids_count} детей, {self.adults_count} взрослых"
+            f"{extras_text}"
+            f"\n💬 Комментарий: {self.notes or '-'}"
+        )
 
 
 class Document(Base):
