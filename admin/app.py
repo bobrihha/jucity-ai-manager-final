@@ -607,12 +607,12 @@ elif page == "Заявки":
     if leads:
         for lead in leads:
             status_labels = {
-                "new": "[НОВАЯ]",
-                "contacted": "[В РАБОТЕ]", 
-                "booked": "[БРОНЬ]",
-                "cancelled": "[ОТМЕНА]"
+                "new": "🔴",
+                "contacted": "🟡", 
+                "booked": "🟢",
+                "cancelled": "⚫"
             }
-            status_label = status_labels.get(lead.status, "[?]")
+            status_label = status_labels.get(lead.status, "⚪")
             
             # Определяем источник и создаем ссылку
             source_icon = "📱"
