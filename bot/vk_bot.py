@@ -21,9 +21,10 @@ VK_BASE_DIR = os_module.path.dirname(os_module.path.dirname(os_module.path.abspa
 VK_IMAGES_DIR = os_module.path.join(VK_BASE_DIR, "static", "images")
 
 IMAGES = {
-    "general": os_module.path.join(VK_IMAGES_DIR, "park.jpg"),       # О парке
-    "birthday": os_module.path.join(VK_IMAGES_DIR, "birthday.jpg"),  # День рождения
-    "events": os_module.path.join(VK_IMAGES_DIR, "events.jpg"),      # Афиша
+    "general": os_module.path.join(VK_IMAGES_DIR, "park.jpg"),           # О парке
+    "birthday": os_module.path.join(VK_IMAGES_DIR, "birthday.jpg"),      # День рождения
+    "events": os_module.path.join(VK_IMAGES_DIR, "events.jpg"),          # Афиша
+    "confirmation": os_module.path.join(VK_IMAGES_DIR, "confirmation.png"),  # Подтверждение
 }
 
 from core.notifications import (
@@ -363,7 +364,7 @@ def create_vk_bot(token: str, group_id: int):
                     
                     # Отправляем картинку ДОПОЛНИТЕЛЬНО
                     try:
-                        attachment = await upload_photo_from_file(IMAGES["birthday"], message.peer_id)
+                        attachment = await upload_photo_from_file(IMAGES["confirmation"], message.peer_id)
                         if attachment:
                             await message.answer("", attachment=attachment)
                     except Exception as e:

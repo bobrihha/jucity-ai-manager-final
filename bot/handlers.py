@@ -29,9 +29,10 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IMAGES_DIR = os.path.join(BASE_DIR, "static", "images")
 
 IMAGES = {
-    "general": os.path.join(IMAGES_DIR, "park.jpg"),       # О парке
-    "birthday": os.path.join(IMAGES_DIR, "birthday.jpg"),  # День рождения
-    "events": os.path.join(IMAGES_DIR, "events.jpg"),      # Афиша
+    "general": os.path.join(IMAGES_DIR, "park.jpg"),           # О парке
+    "birthday": os.path.join(IMAGES_DIR, "birthday.jpg"),      # День рождения
+    "events": os.path.join(IMAGES_DIR, "events.jpg"),          # Афиша
+    "confirmation": os.path.join(IMAGES_DIR, "confirmation.png"),  # Подтверждение заявки
 }
 
 
@@ -570,7 +571,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Отправляем картинку ДОПОЛНИТЕЛЬНО
             try:
-                with open(IMAGES["birthday"], 'rb') as photo_file:
+                with open(IMAGES["confirmation"], 'rb') as photo_file:
                     await context.bot.send_photo(
                         chat_id=update.effective_chat.id,
                         photo=photo_file
