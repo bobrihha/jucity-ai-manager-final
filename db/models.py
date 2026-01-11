@@ -45,6 +45,7 @@ class Client(Base):
     
     id = Column(Integer, primary_key=True)
     telegram_id = Column(String(50), unique=True, index=True)
+    vk_id = Column(String(50), unique=True, index=True)  # New field
     username = Column(String(100))
     first_name = Column(String(100))
     last_name = Column(String(100))

@@ -231,8 +231,13 @@ def create_vk_bot(token: str, group_id: int):
             lead_data = {}
             
             if session.intent == "birthday":
+                # Получаем инфо о пользователе
+                user_info = await message.get_user()
+                vk_fname = user_info.first_name if user_info else None
+                vk_lname = user_info.last_name if user_info else None
+                
                 # Получаем или создаём Lead в БД
-                current_lead = get_or_create_lead(f"vk_{user_id}", source="vk", park_id="nn")
+                current_lead = get_or_create_lead(f"vk_{user_id}", source="vk", park_id="nn", first_name=vk_fname, last_name=vk_lname)
                 
                 # Извлекаем данные из сообщения пользователя
                 extracted = agent.extract_lead_data(message_text, {})

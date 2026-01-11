@@ -11,13 +11,59 @@ from db import SessionLocal, Lead, Client, ClientPhone, ClientChild
 logger = logging.getLogger(__name__)
 
 
-def ensure_client(db, telegram_id: str, username: str = None, phone: str = None, first_name: str = None, last_name: str = None) -> Client:
-    """Гарантировать существование клиента и обновить его данные."""
-    client = db.query(Client).filter(Client.telegram_id == str(telegram_id)).first()
+import re
+
+def normalize_phone(phone: str) -> Optional[str]:
+    """Нормализация телефона: оставляет только цифры, берет последние 10."""
+    if not phone:
+        return None
+    # Оставляем только цифры
+    digits = re.sub(r"\D", "", str(phone))
+    if not digits:
+        return None
+    # Берем последние 10 цифр (без 8 или 7)
+    if len(digits) >= 10:
+        return digits[-10:]
+    return digits
+
+
+def ensure_client(db, telegram_id: str = None, vk_id: str = None, username: str = None, phone: str = None, first_name: str = None, last_name: str = None) -> Client:
+    """Гарантировать существование клиента. Ищет по ID или телефону. Объединяет если находит."""
+    client = None
     
+    # 1. Поиск по ID
+    if telegram_id:
+        client = db.query(Client).filter(Client.telegram_id == str(telegram_id)).first()
+    if not client and vk_id:
+        client = db.query(Client).filter(Client.vk_id == str(vk_id)).first()
+        
+    # 2. Поиск по телефону (если не нашли по ID, но есть телефон)
+    norm_phone = normalize_phone(phone)
+    if not client and norm_phone:
+        # Ищем в основных телефонах
+        # Тут нюанс: в базе телефоны могут быть разные. 
+        # Упрощение: ищем точное совпадение последних 10 цифр в строке (LIKE)
+        # Или лучше пройтись по всем и нормализовать? Это медленно.
+        # Пока ищем по точному совпадению или по client_phones
+        
+        # Поиск в таблице истории телефонов (с нормализацией на лету сложно, ищем like)
+        # Предполагаем что телефоны сохраняются более-менее чистыми, или ищем по подстроке
+        phone_match = db.query(ClientPhone).filter(ClientPhone.phone.contains(norm_phone)).first()
+        if phone_match:
+            client = phone_match.client
+        
+        # Или в основной таблице
+        if not client:
+            client_match = db.query(Client).filter(Client.phone.contains(norm_phone)).first()
+            if client_match:
+                client = client_match
+    
+    # 3. Создание или обновление
     if not client:
+        # Создаем нового
         client = Client(
-            telegram_id=str(telegram_id),
+            telegram_id=str(telegram_id) if telegram_id else None,
+            vk_id=str(vk_id) if vk_id else None,
             username=username,
             first_name=first_name,
             last_name=last_name,
@@ -26,10 +72,28 @@ def ensure_client(db, telegram_id: str, username: str = None, phone: str = None,
         db.add(client)
         db.commit()
         db.refresh(client)
-        logger.info(f"Created new Client #{client.id} for telegram_id {telegram_id}")
+        if phone:
+            # Сразу добавляем телефон в историю
+            db.add(ClientPhone(client_id=client.id, phone=phone))
+            db.commit()
+            
+        logger.info(f"Created new Client #{client.id} (tg={telegram_id}, vk={vk_id})")
     else:
-        # Обновляем данные если пришли новые
+        # 4. ОБЪЕДИНЕНИЕ (MERGE) / Обновление данных
         changed = False
+        
+        # Если нашли клиента, но у него нет текущего ID (например, нашли по телефону, а теперь пишем с ТГ)
+        if telegram_id and not client.telegram_id:
+            client.telegram_id = str(telegram_id)
+            changed = True
+            logger.info(f"Merged Client #{client.id}: added telegram_id {telegram_id}")
+            
+        if vk_id and not client.vk_id:
+            client.vk_id = str(vk_id)
+            changed = True
+            logger.info(f"Merged Client #{client.id}: added vk_id {vk_id}")
+
+        # Обновляем инфо
         if username and client.username != username:
             client.username = username
             changed = True
@@ -39,9 +103,18 @@ def ensure_client(db, telegram_id: str, username: str = None, phone: str = None,
         if last_name and not client.last_name:
             client.last_name = last_name
             changed = True
-        if phone and not client.phone:
-            client.phone = phone
-            changed = True
+        if phone:
+            # Если телефон новый -> добавляем в историю
+            if client.phone != phone:
+                # Проверяем нет ли его уже
+                existing = db.query(ClientPhone).filter(ClientPhone.client_id == client.id, ClientPhone.phone == phone).first()
+                if not existing:
+                    db.add(ClientPhone(client_id=client.id, phone=phone))
+                    db.commit() # Сохраняем телефон отдельно
+                
+            if not client.phone:
+                client.phone = phone
+                changed = True
             
         if changed:
             client.updated_at = datetime.utcnow()
@@ -51,16 +124,20 @@ def ensure_client(db, telegram_id: str, username: str = None, phone: str = None,
     return client
 
 
-def get_or_create_lead(user_id: str, source: str = "telegram", park_id: str = "nn", username: str = None) -> Lead:
+def get_or_create_lead(user_id: str, source: str = "telegram", park_id: str = "nn", username: str = None, first_name: str = None, last_name: str = None) -> Lead:
     """Получить существующий или создать новый лид."""
     db = SessionLocal()
     
-    # 1. Гарантируем клиента
-    client = ensure_client(db, user_id, username=username)
+    # Определяем ID
+    tg_id = user_id if source == "telegram" else None
+    vk_uid = user_id if source == "vk" else None
     
-    # Ищем активный лид (статус new или contacted)
+    # 1. Гарантируем клиента
+    client = ensure_client(db, telegram_id=tg_id, vk_id=vk_uid, username=username, first_name=first_name, last_name=last_name)
+    
+    # Ищем активный лид
     lead = db.query(Lead).filter(
-        Lead.telegram_id == user_id,
+        Lead.telegram_id == str(user_id),
         Lead.park_id == park_id,
         Lead.status.in_(["new", "contacted"])
     ).first()

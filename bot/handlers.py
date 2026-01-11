@@ -466,7 +466,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if session.intent == "birthday":
             # Получаем или создаём Lead в БД
-            current_lead = get_or_create_lead(user_id, source="telegram", park_id="nn", username=user.username)
+            current_lead = get_or_create_lead(
+                user_id, 
+                source="telegram", 
+                park_id="nn", 
+                username=user.username,
+                first_name=user.first_name,
+                last_name=user.last_name
+            )
             
             # Извлекаем данные из сообщения пользователя
             extracted = agent.extract_lead_data(message_text, {})
