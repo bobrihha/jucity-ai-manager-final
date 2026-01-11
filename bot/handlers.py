@@ -552,30 +552,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Обновляем lead_data для следующих итераций
                 lead_data = lead_to_dict(current_lead)
         
-        # Отправляем ответ пользователю
+        # Отправляем ответ пользователю (ВСЕГДА)
         await context.bot.send_message(chat_id=update.effective_chat.id, text=response)
         
-        # Отправка уведомления менеджеру
-        # Отправляем если: бот говорит "передал заявку" И ещё не отправляли
-        if current_lead and not current_lead.sent_to_manager:
-            # Проверяем, говорит ли бот что передал заявку
-            if any(x in response.lower() for x in ["передал", "передаю заявку", "менеджер свяжется", "отдел праздников"]):
-                logger.info(f"Bot confirmed booking for Lead #{current_lead.id}")
-                
-                # Извлекаем данные из ОТВЕТА бота (где он суммаризирует всё)
-                final_data = agent.extract_lead_data(response, lead_data)
-                
-                # Сохраняем финальные данные в Lead
-                current_lead = update_lead_from_data(current_lead.id, final_data)
-                logger.info(f"Lead #{current_lead.id} final data: {lead_to_dict(current_lead)}")
-                
-                # Отправляем уведомление
-                msg_text = format_lead_message("telegram", user_id, lead_to_dict(current_lead), username=user.username)
-                await send_to_managers(msg_text)
-                
-                # Помечаем как отправленный
-                mark_lead_sent_to_manager(current_lead.id)
-                logger.info(f"Manager notification sent for Lead #{current_lead.id}!")
+        # Проверяем, это подтверждение заявки?
+        is_confirmation = current_lead and not current_lead.sent_to_manager and \
+            any(x in response.lower() for x in ["передал", "передаю заявку", "менеджер свяжется", "отдел праздников"])
+        
+        if is_confirmation:
+            # Заявка подтверждена — дополнительно отправляем картинку!
+            logger.info(f"Bot confirmed booking for Lead #{current_lead.id} — sending photo!")
+            
+            # Извлекаем данные из ОТВЕТА бота
+            final_data = agent.extract_lead_data(response, lead_data)
+            current_lead = update_lead_from_data(current_lead.id, final_data)
+            logger.info(f"Lead #{current_lead.id} final data: {lead_to_dict(current_lead)}")
+            
+            # Отправляем картинку ДОПОЛНИТЕЛЬНО
+            try:
+                with open(IMAGES["birthday"], 'rb') as photo_file:
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
+                        photo=photo_file
+                    )
+            except Exception as e:
+                logger.error(f"Failed to send confirmation photo: {e}")
+            
+            # Отправляем уведомление менеджеру
+            msg_text = format_lead_message("telegram", user_id, lead_to_dict(current_lead), username=user.username)
+            await send_to_managers(msg_text)
+            
+            # Помечаем как отправленный
+            mark_lead_sent_to_manager(current_lead.id)
+            logger.info(f"Manager notification sent for Lead #{current_lead.id}!")
         
 
         

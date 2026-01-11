@@ -352,7 +352,7 @@ def create_vk_bot(token: str, group_id: int):
             if current_lead and not current_lead.sent_to_manager:
                 # Проверяем, что бот подтвердил бронь в ответе
                 if any(x in response.lower() for x in ["передал", "передаю заявку", "менеджер свяжется", "отдел праздников"]):
-                    logger.info(f"Bot confirmed booking for Lead #{current_lead.id}")
+                    logger.info(f"Bot confirmed booking for Lead #{current_lead.id} — sending photo!")
                     
                     # Извлекаем данные из ОТВЕТА бота (где он суммаризирует всё)
                     final_data = agent.extract_lead_data(response, lead_data)
@@ -360,6 +360,14 @@ def create_vk_bot(token: str, group_id: int):
                     # Сохраняем финальные данные в Lead
                     current_lead = update_lead_from_data(current_lead.id, final_data)
                     logger.info(f"Lead #{current_lead.id} final data: {lead_to_dict(current_lead)}")
+                    
+                    # Отправляем картинку ДОПОЛНИТЕЛЬНО
+                    try:
+                        attachment = await upload_photo_from_file(IMAGES["birthday"], message.peer_id)
+                        if attachment:
+                            await message.answer("", attachment=attachment)
+                    except Exception as e:
+                        logger.error(f"Failed to send confirmation photo: {e}")
                     
                     # Отправляем уведомление
                     msg_text = format_lead_message("vk", str(user_id), lead_to_dict(current_lead))
