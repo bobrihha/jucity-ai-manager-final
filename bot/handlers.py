@@ -416,8 +416,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Исключаем телефонные паттерны (содержат +, скобки, много дефисов)
         if not re.search(r'[\+\(\)]{1,}|\d{1,3}\-\d{1,3}\-\d{1,3}', message_text):
-            # Теперь ищем ID только с явным ключевым словом перед цифрами
+            # Ищем ID с ключевым словом перед цифрами
             app_id_match = re.search(r'(?:app\s*id|мой\s*id|ид|код)\s*[:.=\-]?\s*(\d{4,6})\b', message_text, re.IGNORECASE)
+            
+            # Если не нашли с ключевым словом — ищем "голое" 5-6 значное число
+            if not app_id_match:
+                # Только если сообщение короткое (до 10 символов) — скорее всего это App ID
+                clean_text = message_text.strip()
+                if len(clean_text) <= 10 and re.match(r'^\d{5,6}$', clean_text):
+                    app_id_match = re.search(r'(\d{5,6})', clean_text)
         
         if app_id_match:
             app_id = app_id_match.group(1)
