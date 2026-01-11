@@ -3,8 +3,9 @@
 import asyncio
 import logging
 from vkbottle.bot import Bot, Message
-from vkbottle import Keyboard, KeyboardButtonColor, Text
+from vkbottle import Keyboard, KeyboardButtonColor, Text, PhotoMessageUploader
 import re
+import aiohttp
 
 from core.agent import Agent
 from core.rag import RAGSystem
@@ -13,6 +14,13 @@ from db.database import SessionLocal
 from db.models import Session as DBSession, Message as DBMessage
 
 logger = logging.getLogger(__name__)
+
+# Картинки для основных разделов
+IMAGES = {
+    "general": "https://i.imgur.com/Wxx3XE1.jpeg",      # О парке
+    "birthday": "https://i.imgur.com/t4fANSy.jpeg",     # День рождения
+    "events": "https://i.imgur.com/QHsN0uh.jpeg",       # Афиша
+}
 
 from core.notifications import (
     send_to_managers, 
@@ -35,6 +43,31 @@ def create_vk_bot(token: str, group_id: int):
     # Инициализируем агента и RAG
     agent = Agent()
     rag = RAGSystem(park_id="nn")
+    
+    # Загрузчик фотографий
+    photo_uploader = PhotoMessageUploader(bot.api)
+    
+    async def upload_photo_from_url(url: str, peer_id: int) -> str:
+        """Загрузить фото по URL и вернуть attachment."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        photo_bytes = await resp.read()
+                        # Создаём временный файл
+                        import tempfile
+                        import os
+                        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as f:
+                            f.write(photo_bytes)
+                            temp_path = f.name
+                        try:
+                            attachment = await photo_uploader.upload(temp_path, peer_id=peer_id)
+                            return attachment
+                        finally:
+                            os.unlink(temp_path)
+        except Exception as e:
+            logger.error(f"Failed to upload photo from {url}: {e}")
+        return None
     
     # Клавиатура для старта
     start_keyboard = (
@@ -74,7 +107,8 @@ def create_vk_bot(token: str, group_id: int):
         finally:
             db.close()
         
-        await message.answer(
+        # Загружаем и отправляем фото с текстом
+        text = (
             "Отлично! 🎢\n\n"
             "Спрашивайте что угодно о парке:\n"
             "• Цены и режим работы\n"
@@ -83,6 +117,11 @@ def create_vk_bot(token: str, group_id: int):
             "• Как добраться\n\n"
             "Я с удовольствием помогу! 😊"
         )
+        attachment = await upload_photo_from_url(IMAGES["general"], message.peer_id)
+        if attachment:
+            await message.answer(text, attachment=attachment)
+        else:
+            await message.answer(text)
     
     @bot.on.message(text="🎉 Организовать праздник")
     async def birthday_handler(message: Message):
@@ -96,11 +135,12 @@ def create_vk_bot(token: str, group_id: int):
         finally:
             db.close()
         
-        await message.answer(
+        # Загружаем и отправляем фото с текстом
+        text = (
             "💜💚 Отлично! День рождения в Джунглях — это радость и вау-эмоции! 💚💜\n\n"
-            "У нас есть 2 формата праздника — выбирайте, что подойдёт именно вам\n\n"
+            "У нас есть 2 формата праздника — выбирайте, что подойдёт именно вам 💚\n\n"
             "🏠 ТЕМАТИЧЕСКАЯ КОМНАТА (3 часа)\n"
-            "— оплачиваются 6 детских билетов\n"
+            "—предоставляется при оплате 6 полных детских билетов\n"
             "— от 7 детей — ИМЕНИННИК БЕСПЛАТНО\n"
             "— безлимит на аттракционы 💚\n\n"
             "🍰 Столик в ресторане\n"
@@ -108,9 +148,14 @@ def create_vk_bot(token: str, group_id: int):
             "— именинник — скидка 50% на вход\n"
             "— безлимит на аттракционы 💚\n\n"
             "✨ Аниматоры, торт, шары, аквагрим — по желанию.\n"
-            "Давайте подберем идеальный вариант для вас!\n\n"
+            "Давайте подберём идеальный вариант для вас 💜\n\n"
             "📅 На какую дату планируете праздник?"
         )
+        attachment = await upload_photo_from_url(IMAGES["birthday"], message.peer_id)
+        if attachment:
+            await message.answer(text, attachment=attachment)
+        else:
+            await message.answer(text)
     
     @bot.on.message(text="🎪 Афиша и события")
     async def events_handler(message: Message):
@@ -123,7 +168,8 @@ def create_vk_bot(token: str, group_id: int):
         finally:
             db.close()
         
-        await message.answer(
+        # Загружаем и отправляем фото с текстом
+        text = (
             "🎪 Афиша Джунгли Сити!\n\n"
             "У нас постоянно проходят интересные события:\n"
             "• Шоу-программы\n"
@@ -132,6 +178,11 @@ def create_vk_bot(token: str, group_id: int):
             "• Праздничные мероприятия\n\n"
             "Спрашивайте, что будет на этих выходных! 🌟"
         )
+        attachment = await upload_photo_from_url(IMAGES["events"], message.peer_id)
+        if attachment:
+            await message.answer(text, attachment=attachment)
+        else:
+            await message.answer(text)
     
     @bot.on.message()
     async def message_handler(message: Message):
@@ -150,10 +201,16 @@ def create_vk_bot(token: str, group_id: int):
             # Сохраняем сообщение пользователя
             user_msg = DBMessage(session_id=session.id, role="user", content=message_text)
             db.add(user_msg)
-            db.commit()
+            # -----------------------------------------------
 
             # --- НОВАЯ ЛОГИКА: Проверка на ID приложения ---
-            app_id_match = re.search(r'(?:id|ид|код|номер|^)\s*[:.\-]?\s*(\d{4,})', message_text, re.IGNORECASE)
+            # Ищем только если есть явное упоминание "id", "код" и НЕТ признаков телефона
+            app_id_match = None
+            
+            # Исключаем телефонные паттерны (содержат +, скобки, много дефисов)
+            if not re.search(r'[\+\(\)]{1,}|\d{1,3}\-\d{1,3}\-\d{1,3}', message_text):
+                # Теперь ищем ID только с явным ключевым словом перед цифрами
+                app_id_match = re.search(r'(?:app\s*id|мой\s*id|ид|код)\s*[:.=\-]?\s*(\d{4,6})\b', message_text, re.IGNORECASE)
             
             if app_id_match:
                 app_id = app_id_match.group(1)
@@ -269,6 +326,16 @@ def create_vk_bot(token: str, group_id: int):
             db.add(assistant_msg)
             db.commit()
             
+            # КРИТИЧНО: Извлекаем данные из ОТВЕТА бота и сохраняем сразу
+            # Бот часто суммаризирует данные в своем ответе (например: "Формат: Тематическая комната")
+            if current_lead and session.intent == "birthday":
+                response_data = agent.extract_lead_data(response, lead_data)
+                if response_data:
+                    current_lead = update_lead_from_data(current_lead.id, response_data)
+                    logger.info(f"Lead #{current_lead.id} updated from bot response: {response_data}")
+                    # Обновляем lead_data для следующих итераций
+                    lead_data = lead_to_dict(current_lead)
+            
             # Отправляем ответ (VK лимит 4096 символов)
             if len(response) > 4000:
                 for i in range(0, len(response), 4000):
@@ -331,9 +398,29 @@ def get_or_create_session(db, user_id: int, platform: str = "vk") -> DBSession:
 
 async def run_vk_bot(token: str, group_id: int):
     """Запустить VK бота."""
+    import threading
+    
     bot = create_vk_bot(token, group_id)
     logger.info(f"VK Bot starting for group {group_id}...")
-    await bot.run_polling()
+    
+    # Запускаем VK бота в отдельном потоке чтобы избежать конфликта event loop
+    # VKBottle's run_polling создает свой event loop
+    def run_in_thread():
+        try:
+            # Создаем новый event loop для этого потока
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            bot.run_forever()
+        except Exception as e:
+            logger.error(f"VK Bot error in thread: {e}")
+    
+    thread = threading.Thread(target=run_in_thread, daemon=True)
+    thread.start()
+    logger.info(f"VK Bot started in separate thread for group {group_id}")
+    
+    # Ждем бесконечно (пока не отменят)
+    while True:
+        await asyncio.sleep(60)  # Heartbeat every minute
 
 
 if __name__ == "__main__":

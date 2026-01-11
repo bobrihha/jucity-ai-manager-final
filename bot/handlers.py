@@ -23,6 +23,13 @@ from core.lead_service import (
 
 logger = logging.getLogger(__name__)
 
+# Картинки для основных разделов
+IMAGES = {
+    "general": "https://i.imgur.com/Wxx3XE1.jpeg",      # О парке
+    "birthday": "https://i.imgur.com/t4fANSy.jpeg",     # День рождения
+    "events": "https://i.imgur.com/QHsN0uh.jpeg",       # Афиша
+}
+
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start."""
@@ -278,6 +285,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Получаем сессию
     db = SessionLocal()
     session = db.query(DBSession).filter(DBSession.telegram_id == str(query.from_user.id)).first()
+    chat_id = query.message.chat_id
     
     try:
         if query.data == "intent_birthday":
@@ -285,14 +293,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 session.intent = "birthday"
                 db.commit()
             
-            # Получаем актуальные цены
-            prices = get_prices_from_knowledge()
+            # Удаляем старое сообщение с кнопками
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
             
-            await query.edit_message_text(
+            # Отправляем фото с текстом
+            caption = (
                 "💜💚 Отлично! День рождения в Джунглях — это радость и вау-эмоции! 💚💜\n\n"
-                "У нас есть 2 формата праздника — выбирайте, что подойдёт именно вам\n\n"
+                "У нас есть 2 формата праздника — выбирайте, что подойдёт именно вам 💚\n\n"
                 "🏠 ТЕМАТИЧЕСКАЯ КОМНАТА (3 часа)\n"
-                "— оплачиваются 6 детских билетов\n"
+                "—предоставляется при оплате 6 полных детских билетов\n"
                 "— от 7 детей — ИМЕНИННИК БЕСПЛАТНО\n"
                 "— безлимит на аттракционы 💚\n\n"
                 "🍰 Столик в ресторане\n"
@@ -300,8 +312,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "— именинник — скидка 50% на вход\n"
                 "— безлимит на аттракционы 💚\n\n"
                 "✨ Аниматоры, торт, шары, аквагрим — по желанию.\n"
-                "Давайте подберем идеальный вариант для вас!\n\n"
+                "Давайте подберём идеальный вариант для вас 💜\n\n"
                 "📅 На какую дату планируете праздник?"
+            )
+            await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=IMAGES["birthday"],
+                caption=caption
             )
             
         elif query.data == "intent_general":
@@ -309,7 +326,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 session.intent = "general"
                 db.commit()
             
-            await query.edit_message_text(
+            # Удаляем старое сообщение с кнопками
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            
+            # Отправляем фото с текстом
+            caption = (
                 "Отлично! 🎢\n\n"
                 "Спрашивайте что угодно о парке:\n"
                 "• Цены и режим работы\n"
@@ -318,13 +342,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "• Как добраться\n\n"
                 "Я с удовольствием помогу! 😊"
             )
+            await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=IMAGES["general"],
+                caption=caption
+            )
             
         elif query.data == "intent_events":
             if session:
                 session.intent = "events"
                 db.commit()
             
-            await query.edit_message_text(
+            # Удаляем старое сообщение с кнопками
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            
+            # Отправляем фото с текстом
+            caption = (
                 "🎪 Афиша Джунгли Сити!\n\n"
                 "У нас постоянно проходят интересные события:\n"
                 "• Шоу-программы\n"
@@ -332,6 +368,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "• Дискотеки\n"
                 "• Праздничные мероприятия\n\n"
                 "Спрашивайте, что будет на этих выходных! 🌟"
+            )
+            await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=IMAGES["events"],
+                caption=caption
             )
     finally:
         db.close()
@@ -366,33 +407,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.commit()
 
         # --- НОВАЯ ЛОГИКА: Проверка на ID приложения ---
-        # Ищем паттерн ID (числа, возможно с префиксом "id", "ид", "номер")
-        # Regex ловит: "12345", "ID 12345", "ид: 12345", "мой номер 12345"
-        # Исключаем простые короткие числа, если это не явно ID (чтобы не ловить "мне 2 билета")
-        app_id_match = re.search(r'(?:id|ид|код|номер|^)\s*[:.\-]?\s*(\d{4,})', message_text, re.IGNORECASE)
+        # Ищем только если есть явное упоминание "id", "код" и НЕТ признаков телефона
+        app_id_match = None
         
-        # Разрешаем просто числа от 4 знаков (например "16327") или явные ID с любым кол-вом цифр
+        # Исключаем телефонные паттерны (содержат +, скобки, много дефисов)
+        if not re.search(r'[\+\(\)]{1,}|\d{1,3}\-\d{1,3}\-\d{1,3}', message_text):
+            # Теперь ищем ID только с явным ключевым словом перед цифрами
+            app_id_match = re.search(r'(?:app\s*id|мой\s*id|ид|код)\s*[:.=\-]?\s*(\d{4,6})\b', message_text, re.IGNORECASE)
+        
         if app_id_match:
             app_id = app_id_match.group(1)
             
-            # Отправляем уведомление менеджеру
-            if MANAGER_CHAT_ID:
-                try:
-                    user_link = f"@{user.username}" if user.username else f"ID {user_id}"
-                    msg_text = (
-                        f"🔔 <b>Новый App ID для начисления баллов!</b>\n\n"
-                        f"👤 Пользователь: {user.first_name} ({user_link})\n"
-                        f"🔢 ID: <code>{app_id}</code>\n"
-                        f"💬 Сообщение: {message_text}"
-                    )
-                    await context.bot.send_message(
-                        chat_id=MANAGER_CHAT_ID,
-                        text=msg_text,
-                        parse_mode="HTML"
-                    )
-                    logger.info(f"App ID {app_id} notification sent to manager")
-                except Exception as e:
-                    logger.error(f"Failed to notify manager about App ID: {e}")
+            # Отправляем уведомление менеджерам
+            try:
+                msg_text = (
+                    f"🔔 <b>Новый App ID!</b>\n\n"
+                    f"👤 Пользователь: {user.first_name or 'Неизвестный'} (@{user.username or 'нет username'})\n"
+                    f"🔢 ID: <code>{app_id}</code>\n"
+                    f"💬 Сообщение: {message_text}"
+                )
+                await send_to_managers(msg_text)
+                logger.info(f"App ID {app_id} notification sent to manager")
+            except Exception as e:
+                logger.error(f"Failed to notify manager about App ID: {e}")
             
             # Отвечаем пользователю
             await update.message.reply_text(
@@ -501,6 +538,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         assistant_message = Message(session_id=session.id, role="assistant", content=response)
         db.add(assistant_message)
         db.commit()
+        
+        # КРИТИЧНО: Извлекаем данные из ОТВЕТА бота и сохраняем сразу
+        # Бот часто суммаризирует данные в своем ответе (например: "Спасибо, Наталья!")
+        if current_lead and session.intent == "birthday":
+            response_data = agent.extract_lead_data(response, lead_data)
+            if response_data:
+                current_lead = update_lead_from_data(current_lead.id, response_data)
+                logger.info(f"Lead #{current_lead.id} updated from bot response: {response_data}")
+                # Обновляем lead_data для следующих итераций
+                lead_data = lead_to_dict(current_lead)
         
         # Отправляем ответ пользователю
         await context.bot.send_message(chat_id=update.effective_chat.id, text=response)
