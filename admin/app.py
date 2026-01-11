@@ -326,6 +326,7 @@ elif page == "🎯 Заявки":
                     lead.status = new_status
                     db.commit()
                     st.success("Статус обновлён!")
+                    st.rerun()
     else:
         st.info("Заявок пока нет.")
     
