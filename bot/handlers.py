@@ -23,11 +23,15 @@ from core.lead_service import (
 
 logger = logging.getLogger(__name__)
 
-# Картинки для основных разделов
+# Картинки для основных разделов (локальные файлы на сервере)
+import os
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+IMAGES_DIR = os.path.join(BASE_DIR, "static", "images")
+
 IMAGES = {
-    "general": "https://i.imgur.com/Wxx3XE1.jpeg",      # О парке
-    "birthday": "https://i.imgur.com/t4fANSy.jpeg",     # День рождения
-    "events": "https://i.imgur.com/QHsN0uh.jpeg",       # Афиша
+    "general": os.path.join(IMAGES_DIR, "park.jpg"),       # О парке
+    "birthday": os.path.join(IMAGES_DIR, "birthday.jpg"),  # День рождения
+    "events": os.path.join(IMAGES_DIR, "events.jpg"),      # Афиша
 }
 
 
@@ -315,11 +319,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Давайте подберём идеальный вариант для вас 💜\n\n"
                 "📅 На какую дату планируете праздник?"
             )
-            await context.bot.send_photo(
-                chat_id=chat_id,
-                photo=IMAGES["birthday"],
-                caption=caption
-            )
+            with open(IMAGES["birthday"], 'rb') as photo_file:
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo_file,
+                    caption=caption
+                )
             
         elif query.data == "intent_general":
             if session:
@@ -342,11 +347,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "• Как добраться\n\n"
                 "Я с удовольствием помогу! 😊"
             )
-            await context.bot.send_photo(
-                chat_id=chat_id,
-                photo=IMAGES["general"],
-                caption=caption
-            )
+            with open(IMAGES["general"], 'rb') as photo_file:
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo_file,
+                    caption=caption
+                )
             
         elif query.data == "intent_events":
             if session:
@@ -369,11 +375,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "• Праздничные мероприятия\n\n"
                 "Спрашивайте, что будет на этих выходных! 🌟"
             )
-            await context.bot.send_photo(
-                chat_id=chat_id,
-                photo=IMAGES["events"],
-                caption=caption
-            )
+            with open(IMAGES["events"], 'rb') as photo_file:
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo_file,
+                    caption=caption
+                )
     finally:
         db.close()
 

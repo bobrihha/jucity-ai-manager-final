@@ -15,11 +15,15 @@ from db.models import Session as DBSession, Message as DBMessage
 
 logger = logging.getLogger(__name__)
 
-# Картинки для основных разделов
+# Картинки для основных разделов (локальные файлы на сервере)
+import os as os_module
+VK_BASE_DIR = os_module.path.dirname(os_module.path.dirname(os_module.path.abspath(__file__)))
+VK_IMAGES_DIR = os_module.path.join(VK_BASE_DIR, "static", "images")
+
 IMAGES = {
-    "general": "https://i.imgur.com/Wxx3XE1.jpeg",      # О парке
-    "birthday": "https://i.imgur.com/t4fANSy.jpeg",     # День рождения
-    "events": "https://i.imgur.com/QHsN0uh.jpeg",       # Афиша
+    "general": os_module.path.join(VK_IMAGES_DIR, "park.jpg"),       # О парке
+    "birthday": os_module.path.join(VK_IMAGES_DIR, "birthday.jpg"),  # День рождения
+    "events": os_module.path.join(VK_IMAGES_DIR, "events.jpg"),      # Афиша
 }
 
 from core.notifications import (
@@ -47,26 +51,16 @@ def create_vk_bot(token: str, group_id: int):
     # Загрузчик фотографий
     photo_uploader = PhotoMessageUploader(bot.api)
     
-    async def upload_photo_from_url(url: str, peer_id: int) -> str:
-        """Загрузить фото по URL и вернуть attachment."""
+    async def upload_photo_from_file(file_path: str, peer_id: int) -> str:
+        """Загрузить фото из локального файла и вернуть attachment."""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
-                    if resp.status == 200:
-                        photo_bytes = await resp.read()
-                        # Создаём временный файл
-                        import tempfile
-                        import os
-                        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as f:
-                            f.write(photo_bytes)
-                            temp_path = f.name
-                        try:
-                            attachment = await photo_uploader.upload(temp_path, peer_id=peer_id)
-                            return attachment
-                        finally:
-                            os.unlink(temp_path)
+            if os_module.path.exists(file_path):
+                attachment = await photo_uploader.upload(file_path, peer_id=peer_id)
+                return attachment
+            else:
+                logger.error(f"Photo file not found: {file_path}")
         except Exception as e:
-            logger.error(f"Failed to upload photo from {url}: {e}")
+            logger.error(f"Failed to upload photo from {file_path}: {e}")
         return None
     
     # Клавиатура для старта
@@ -117,7 +111,7 @@ def create_vk_bot(token: str, group_id: int):
             "• Как добраться\n\n"
             "Я с удовольствием помогу! 😊"
         )
-        attachment = await upload_photo_from_url(IMAGES["general"], message.peer_id)
+        attachment = await upload_photo_from_file(IMAGES["general"], message.peer_id)
         if attachment:
             await message.answer(text, attachment=attachment)
         else:
@@ -151,7 +145,7 @@ def create_vk_bot(token: str, group_id: int):
             "Давайте подберём идеальный вариант для вас 💜\n\n"
             "📅 На какую дату планируете праздник?"
         )
-        attachment = await upload_photo_from_url(IMAGES["birthday"], message.peer_id)
+        attachment = await upload_photo_from_file(IMAGES["birthday"], message.peer_id)
         if attachment:
             await message.answer(text, attachment=attachment)
         else:
@@ -178,7 +172,7 @@ def create_vk_bot(token: str, group_id: int):
             "• Праздничные мероприятия\n\n"
             "Спрашивайте, что будет на этих выходных! 🌟"
         )
-        attachment = await upload_photo_from_url(IMAGES["events"], message.peer_id)
+        attachment = await upload_photo_from_file(IMAGES["events"], message.peer_id)
         if attachment:
             await message.answer(text, attachment=attachment)
         else:
