@@ -178,6 +178,14 @@ def create_vk_bot(token: str, group_id: int):
         else:
             await message.answer(text)
     
+    # Тексты кнопок, которые обрабатываются отдельными хендлерами
+    BUTTON_TEXTS = [
+        "🎟 Узнать о парке",
+        "🎉 Организовать праздник",
+        "🎪 Афиша и события",
+        "Начать", "начать", "Start", "start", "/start"
+    ]
+    
     @bot.on.message()
     async def message_handler(message: Message):
         """Обработка всех текстовых сообщений."""
@@ -185,6 +193,11 @@ def create_vk_bot(token: str, group_id: int):
             return
         
         message_text = message.text.strip()
+        
+        # Игнорируем тексты кнопок — они обрабатываются отдельными хендлерами
+        if message_text in BUTTON_TEXTS:
+            return
+        
         user_id = message.from_id
         
         db = SessionLocal()
