@@ -30,6 +30,15 @@ def check_password():
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
     
+    # Проверка "волшебной ссылки"
+    # Поддержка st.query_params (Streamlit 1.30+)
+    query_params = st.query_params
+    auth_token = query_params.get("auth")
+    
+    if auth_token == ADMIN_PASSWORD:
+        st.session_state.authenticated = True
+        return True
+
     if st.session_state.authenticated:
         return True
     
@@ -323,7 +332,6 @@ elif page == "🎯 Заявки":
             }
             status_emoji = status_colors.get(lead.status, "⚪")
             
-            with st.expander(f"{status_emoji} {lead.customer_name or 'Без имени'} | {lead.event_date or 'Дата не указана'}"):
             # Определяем источник и создаем ссылку
             source_icon = "📱"
             user_link = "#"
