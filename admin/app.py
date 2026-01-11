@@ -60,9 +60,18 @@ if st.sidebar.button("🚪 Выйти"):
     st.rerun()
 
 # Сайдбар для навигации
+if "page_nav" not in st.session_state:
+    st.session_state.page_nav = "🎯 Заявки"
+
+def on_page_change():
+    st.session_state.page_nav = st.session_state.page_selector
+
 page = st.sidebar.selectbox(
     "Раздел",
-    ["📚 База знаний", "🤖 Команды бота", "💬 Диалоги", "🎯 Заявки", "⚙️ Настройки"]
+    ["📚 База знаний", "🤖 Команды бота", "💬 Диалоги", "🎯 Заявки", "⚙️ Настройки"],
+    key="page_selector",
+    index=["📚 База знаний", "🤖 Команды бота", "💬 Диалоги", "🎯 Заявки", "⚙️ Настройки"].index(st.session_state.page_nav),
+    on_change=on_page_change
 )
 
 
@@ -255,8 +264,22 @@ elif page == "🤖 Команды бота":
 elif page == "💬 Диалоги":
     st.header("💬 История диалогов")
     
+    # Фильтр по ID
+    filter_id = st.text_input("🔍 Поиск по ID (VK или Telegram)", value=st.session_state.get("filter_user_id", ""))
+    
+    if st.button("Сбросить фильтр"):
+        st.session_state.filter_user_id = ""
+        st.rerun()
+    
     db = SessionLocal()
-    sessions = db.query(DBSession).order_by(DBSession.updated_at.desc()).limit(50).all()
+    
+    query = db.query(DBSession).order_by(DBSession.updated_at.desc())
+    
+    if filter_id:
+        # Ищем по telegram_id (частичное совпадение)
+        query = query.filter(DBSession.telegram_id.contains(filter_id))
+    
+    sessions = query.limit(50).all()
     
     if sessions:
         for session in sessions:
@@ -278,7 +301,7 @@ elif page == "💬 Диалоги":
                 if session.lead_data:
                     st.json(session.lead_data)
     else:
-        st.info("Диалогов пока нет.")
+        st.info("Диалогов не найдено.")
     
     db.close()
 
@@ -301,32 +324,71 @@ elif page == "🎯 Заявки":
             status_emoji = status_colors.get(lead.status, "⚪")
             
             with st.expander(f"{status_emoji} {lead.customer_name or 'Без имени'} | {lead.event_date or 'Дата не указана'}"):
-                col1, col2 = st.columns(2)
+            # Определяем источник и создаем ссылку
+            source_icon = "📱"
+            user_link = "#"
+            if lead.source == "vk" or str(lead.telegram_id).startswith("vk_"):
+                vk_id = str(lead.telegram_id).replace("vk_", "")
+                user_link = f"https://vk.com/id{vk_id}"
+                source_icon = "🔵 VK"
+            else:
+                user_link = f"tg://user?id={lead.telegram_id}"
+                source_icon = "✈️ TG"
+
+            with st.expander(f"{status_emoji} {lead.customer_name or 'Без имени'} | {lead.event_date or 'Дата не указана'}"):
                 
-                with col1:
-                    st.write(f"👤 **Контакт:** {lead.customer_name or '-'}")
-                    st.write(f"📞 **Телефон:** {lead.phone or '-'}")
-                    st.write(f"👶 **Именинник:** {lead.child_name or '-'} ({lead.child_age or '?'} лет)")
+                # --- БЛОК 1: Основные действия ---
+                col_act1, col_act2, col_act3 = st.columns([1, 1, 2])
+                with col_act1:
+                    st.markdown(f"**[{source_icon} Профиль]({user_link})**")
+                with col_act2:
+                    if st.button("📜 Переписка", key=f"hist_{lead.id}"):
+                        st.session_state.filter_user_id = lead.telegram_id
+                        st.session_state.page_nav = "💬 Диалоги"
+                        st.rerun()
                 
-                with col2:
-                    st.write(f"📅 **Дата:** {lead.event_date or '-'}")
-                    st.write(f"👧 **Детей:** {lead.kids_count or '-'}")
-                    st.write(f"👨 **Взрослых:** {lead.adults_count or '-'}")
-                    st.write(f"📍 **Формат:** {lead.format or '-'}")
-                
-                # Изменение статуса
-                new_status = st.selectbox(
-                    "Статус",
-                    ["new", "contacted", "booked", "cancelled"],
-                    index=["new", "contacted", "booked", "cancelled"].index(lead.status),
-                    key=f"status_{lead.id}"
-                )
-                
-                if new_status != lead.status:
-                    lead.status = new_status
-                    db.commit()
-                    st.success("Статус обновлён!")
-                    st.rerun()
+                st.divider()
+
+                # --- БЛОК 2: Редактирование данных ---
+                with st.form(key=f"lead_form_{lead.id}"):
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        new_name = st.text_input("Имя клиента", value=lead.customer_name or "")
+                        new_phone = st.text_input("Телефон", value=lead.phone or "")
+                        new_child = st.text_input("Имя именинника", value=lead.child_name or "")
+                        new_age = st.number_input("Возраст", value=lead.child_age or 0, step=1)
+                    
+                    with c2:
+                        new_date = st.text_input("Дата праздника", value=lead.event_date or "")
+                        new_kids = st.number_input("Детей", value=lead.kids_count or 0, step=1)
+                        new_adults = st.number_input("Взрослых", value=lead.adults_count or 0, step=1)
+                        new_format = st.text_input("Формат", value=lead.format or "")
+                    
+                    st.markdown("**Дополнительно:**")
+                    new_notes = st.text_area("Комментарий / Заметки", value=lead.notes or "", height=100)
+                    
+                    # Статус внутри формы
+                    new_status = st.selectbox(
+                        "Статус заявки",
+                        ["new", "contacted", "booked", "cancelled"],
+                        index=["new", "contacted", "booked", "cancelled"].index(lead.status)
+                    )
+                    
+                    if st.form_submit_button("💾 Сохранить изменения"):
+                        lead.customer_name = new_name
+                        lead.phone = new_phone
+                        lead.child_name = new_child
+                        lead.child_age = new_age
+                        lead.event_date = new_date
+                        lead.kids_count = new_kids
+                        lead.adults_count = new_adults
+                        lead.format = new_format
+                        lead.notes = new_notes
+                        lead.status = new_status
+                        
+                        db.commit()
+                        st.success("Данные обновлены!")
+                        st.rerun()
     else:
         st.info("Заявок пока нет.")
     
