@@ -11,36 +11,37 @@ from db import SessionLocal, Lead
 logger = logging.getLogger(__name__)
 
 
-def get_or_create_lead(user_id: str, source: str = "telegram", park_id: str = "nn") -> Lead:
-    """
-    Получить или создать лид для пользователя.
-    Если есть незавершённый лид (статус 'new') — вернуть его.
-    Иначе — создать новый.
-    """
+def get_or_create_lead(user_id: str, source: str = "telegram", park_id: str = "nn", username: str = None) -> Lead:
+    """Получить существующий или создать новый лид."""
     db = SessionLocal()
-    try:
-        # Ищем незавершённый лид для этого пользователя
-        lead = db.query(Lead).filter(
-            Lead.telegram_id == user_id,
-            Lead.status == "new"
-        ).order_by(Lead.created_at.desc()).first()
-        
-        if not lead:
-            # Создаём новый лид
-            lead = Lead(
-                telegram_id=user_id,
-                source=source,
-                park_id=park_id,
-                status="new"
-            )
-            db.add(lead)
+    
+    # Ищем активный лид (статус new или contacted)
+    lead = db.query(Lead).filter(
+        Lead.telegram_id == user_id,
+        Lead.park_id == park_id,
+        Lead.status.in_(["new", "contacted"])
+    ).first()
+    
+    if not lead:
+        lead = Lead(
+            telegram_id=str(user_id),
+            park_id=park_id,
+            source=source,
+            username=username,
+            status="new"
+        )
+        db.add(lead)
+        db.commit()
+        db.refresh(lead)
+    else:
+        # Обновляем username если появился
+        if username and lead.username != username:
+            lead.username = username
             db.commit()
             db.refresh(lead)
-            logger.info(f"Created new lead #{lead.id} for user {user_id}")
-        
-        return lead
-    finally:
-        db.close()
+            
+    db.close()
+    return lead
 
 
 def update_lead_from_data(lead_id: int, data: dict) -> Lead:

@@ -340,8 +340,12 @@ elif page == "🎯 Заявки":
                 user_link = f"https://vk.com/id{vk_id}"
                 source_icon = "🔵 VK"
             else:
-                user_link = f"tg://user?id={lead.telegram_id}"
-                source_icon = "✈️ TG"
+                if lead.username:
+                    user_link = f"https://t.me/{lead.username}"
+                    source_icon = "✈️ TG"
+                else:
+                    user_link = f"tg://user?id={lead.telegram_id}"
+                    source_icon = "✈️ TG (ID)"
 
             with st.expander(f"{status_emoji} {lead.customer_name or 'Без имени'} | {lead.event_date or 'Дата не указана'}"):
                 

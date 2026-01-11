@@ -14,6 +14,7 @@ class Session(Base):
     
     id = Column(Integer, primary_key=True)
     telegram_id = Column(String(50), unique=True, index=True)
+    username = Column(String(100))  # telegram username without @
     park_id = Column(String(10), default="nn")
     intent = Column(String(20), default="unknown")  # birthday, general, unknown
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -44,6 +45,7 @@ class Lead(Base):
     
     id = Column(Integer, primary_key=True)
     telegram_id = Column(String(50), index=True)  # или vk_123456
+    username = Column(String(100))  # telegram username
     park_id = Column(String(10), default="nn")
     source = Column(String(20), default="telegram")  # telegram, vk
     

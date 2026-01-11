@@ -351,10 +351,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Получаем или создаём сессию
         session = db.query(DBSession).filter(DBSession.telegram_id == user_id).first()
         if not session:
-            session = DBSession(telegram_id=user_id, park_id="nn")
+            session = DBSession(telegram_id=user_id, park_id="nn", username=user.username)
             db.add(session)
             db.commit()
             db.refresh(session)
+        else:
+            # Обновляем username если изменился
+            if user.username and session.username != user.username:
+                session.username = user.username
+                db.commit()
         
         # Сохраняем сообщение пользователя
         user_message = Message(session_id=session.id, role="user", content=message_text)
@@ -461,7 +466,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if session.intent == "birthday":
             # Получаем или создаём Lead в БД
-            current_lead = get_or_create_lead(user_id, source="telegram", park_id="nn")
+            current_lead = get_or_create_lead(user_id, source="telegram", park_id="nn", username=user.username)
             
             # Извлекаем данные из сообщения пользователя
             extracted = agent.extract_lead_data(message_text, {})
