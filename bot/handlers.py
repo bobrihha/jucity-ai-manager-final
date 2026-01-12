@@ -58,6 +58,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Приветственное сообщение с кнопками
     keyboard = [
+        [InlineKeyboardButton("📋 Моё бронирование", callback_data="my_booking")],
         [InlineKeyboardButton("🎫 Узнать о парке", callback_data="intent_general")],
         [InlineKeyboardButton("🎉 Организовать праздник", callback_data="intent_birthday")],
         [InlineKeyboardButton("🎪 Афиша и события", callback_data="intent_events")]
@@ -277,6 +278,101 @@ async def promo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+def format_booking_info(lead) -> str:
+    """Форматировать информацию о бронировании для пользователя."""
+    status_emoji = {
+        "new": "📝 Новая заявка",
+        "contacted": "📞 Связываемся",
+        "booked": "✅ Подтверждено"
+    }
+    
+    text = f"📋 <b>Ваше бронирование #{lead.id}</b>\n\n"
+    text += f"📊 Статус: {status_emoji.get(lead.status, lead.status)}\n"
+    
+    if lead.event_date:
+        text += f"📅 Дата: <b>{lead.event_date}</b>\n"
+    if lead.time:
+        text += f"⏰ Время: <b>{lead.time}</b>\n"
+    if lead.kids_count:
+        text += f"👶 Детей: {lead.kids_count}\n"
+    if lead.adults_count:
+        text += f"👨 Взрослых: {lead.adults_count}\n"
+    if lead.child_name:
+        text += f"🎂 Именинник: {lead.child_name}"
+        if lead.child_age:
+            text += f" ({lead.child_age} лет)"
+        text += "\n"
+    if lead.format:
+        text += f"🏠 Формат: {lead.format}\n"
+    if lead.room:
+        text += f"🚪 Комната: {lead.room}\n"
+    if lead.customer_name:
+        text += f"👤 Контакт: {lead.customer_name}\n"
+    if lead.phone:
+        text += f"📞 Телефон: {lead.phone}\n"
+    
+    return text
+
+
+async def booking_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /booking — показать информацию о бронировании."""
+    user = update.effective_user
+    
+    db = SessionLocal()
+    try:
+        # Ищем активные лиды пользователя (только отправленные менеджеру)
+        leads = db.query(Lead).filter(
+            Lead.telegram_id == str(user.id),
+            Lead.status.in_(["new", "contacted", "booked"]),
+            Lead.sent_to_manager == True
+        ).order_by(Lead.created_at.desc()).limit(3).all()
+        
+        if not leads:
+            # Проверяем черновики
+            drafts = db.query(Lead).filter(
+                Lead.telegram_id == str(user.id),
+                Lead.sent_to_manager == False,
+                Lead.status.in_(["new", "contacted"])
+            ).first()
+            
+            if drafts:
+                await update.message.reply_text(
+                    "📝 У вас есть незавершённая заявка на праздник.\n\n"
+                    "Чтобы продолжить оформление, напишите /birthday\n"
+                    "или задайте мне любой вопрос! 😊"
+                )
+            else:
+                keyboard = [
+                    [InlineKeyboardButton("🎉 Забронировать праздник", callback_data="intent_birthday")]
+                ]
+                await update.message.reply_text(
+                    "📋 У вас пока нет активных бронирований.\n\n"
+                    "Хотите организовать незабываемый день рождения? 🎂",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            return
+        
+        # Показываем бронирования
+        for lead in leads:
+            text = format_booking_info(lead)
+            
+            keyboard = [
+                [InlineKeyboardButton("✏️ Изменить дату/время", callback_data=f"change_{lead.id}_datetime")],
+                [InlineKeyboardButton("👥 Изменить кол-во гостей", callback_data=f"change_{lead.id}_guests")],
+                [InlineKeyboardButton("🎁 Добавить услуги", callback_data=f"change_{lead.id}_extras")],
+                [InlineKeyboardButton("❌ Отменить бронь", callback_data=f"change_{lead.id}_cancel")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode="HTML"
+            )
+    finally:
+        db.close()
+
+
 async def dynamic_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Универсальный обработчик динамических команд из БД."""
     command_name = update.message.text.replace("/", "").split("@")[0]  # удаляем @botname если есть
@@ -473,6 +569,96 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=chat_id,
                     photo=photo_file,
                     caption=caption
+                )
+        
+        elif query.data == "my_booking":
+            # Кнопка "Моё бронирование" из стартового меню
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            
+            # Ищем активные лиды
+            leads = db.query(Lead).filter(
+                Lead.telegram_id == str(query.from_user.id),
+                Lead.status.in_(["new", "contacted", "booked"]),
+                Lead.sent_to_manager == True
+            ).order_by(Lead.created_at.desc()).limit(3).all()
+            
+            if not leads:
+                keyboard = [
+                    [InlineKeyboardButton("🎉 Забронировать праздник", callback_data="intent_birthday")]
+                ]
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="📋 У вас пока нет активных бронирований.\n\n"
+                         "Хотите организовать незабываемый день рождения? 🎂",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            else:
+                for lead in leads:
+                    text = format_booking_info(lead)
+                    keyboard = [
+                        [InlineKeyboardButton("✏️ Изменить дату/время", callback_data=f"change_{lead.id}_datetime")],
+                        [InlineKeyboardButton("👥 Изменить кол-во гостей", callback_data=f"change_{lead.id}_guests")],
+                        [InlineKeyboardButton("🎁 Добавить услуги", callback_data=f"change_{lead.id}_extras")],
+                        [InlineKeyboardButton("❌ Отменить бронь", callback_data=f"change_{lead.id}_cancel")]
+                    ]
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=text,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode="HTML"
+                    )
+        
+        elif query.data.startswith("change_"):
+            # Обработка запросов на изменение бронирования
+            parts = query.data.split("_")
+            lead_id = int(parts[1])
+            change_type = parts[2]
+            
+            change_type_text = {
+                "datetime": "📅 Изменить дату/время",
+                "guests": "👥 Изменить количество гостей",
+                "extras": "🎁 Добавить услуги",
+                "cancel": "❌ Отменить бронирование"
+            }
+            
+            # Получаем информацию о лиде
+            lead = db.query(Lead).filter(Lead.id == lead_id).first()
+            
+            if lead:
+                # Формируем уведомление менеджеру
+                msg_text = (
+                    f"⚠️ <b>Запрос на изменение бронирования</b>\n\n"
+                    f"📋 Заявка: #{lead.id}\n"
+                    f"🔄 Тип: {change_type_text.get(change_type, change_type)}\n\n"
+                    f"👤 Клиент: {lead.customer_name or 'Не указано'}\n"
+                    f"📞 Телефон: {lead.phone or 'Не указан'}\n"
+                    f"💬 Telegram: @{query.from_user.username or 'нет username'}\n\n"
+                    f"📅 Текущая дата: {lead.event_date or 'Не указана'}\n"
+                    f"⏰ Время: {lead.time or 'Не указано'}\n"
+                    f"👶 Детей: {lead.kids_count or 0}"
+                )
+                await send_to_managers(msg_text)
+                
+                # Отвечаем пользователю
+                if change_type == "cancel":
+                    response_text = (
+                        "❌ Запрос на отмену бронирования передан менеджеру.\n\n"
+                        "Наши феи праздников свяжутся с вами в ближайшее время для подтверждения."
+                    )
+                else:
+                    response_text = (
+                        f"✅ Запрос на изменение передан менеджеру!\n\n"
+                        f"Тип изменения: {change_type_text.get(change_type, change_type)}\n\n"
+                        f"Наши феи праздников свяжутся с вами в ближайшее время. 💚"
+                    )
+                
+                await query.message.reply_text(response_text)
+            else:
+                await query.message.reply_text(
+                    "К сожалению, бронирование не найдено. Попробуйте /booking ещё раз."
                 )
     finally:
         db.close()

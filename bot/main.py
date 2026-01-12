@@ -7,7 +7,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 
 from bot.handlers import (
     start_command, handle_message, button_handler, error_handler,
-    birthday_command, human_command, dynamic_command_handler
+    birthday_command, human_command, dynamic_command_handler, booking_command
 )
 from config.settings import TELEGRAM_BOT_TOKEN, VK_TOKEN, VK_GROUP_ID
 from db import init_db, SessionLocal, BotCommand as DBBotCommand
@@ -35,6 +35,7 @@ async def post_init(application):
             # Дефолтные команды для первого запуска
             commands = [
                 BotCommand("start", "🏠 Главное меню"),
+                BotCommand("booking", "📋 Моё бронирование"),
                 BotCommand("prices", "💰 Цены"),
                 BotCommand("birthday", "🎂 День рождения"),
                 # ... остальные можно добавить или оставить пустым если БД пустая
@@ -103,6 +104,7 @@ def main():
     
     # Регистрируем обработчики команд
     application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("booking", booking_command))
     application.add_handler(CommandHandler("birthday", birthday_command))
     application.add_handler(CommandHandler("human", human_command))
     
