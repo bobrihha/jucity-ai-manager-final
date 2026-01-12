@@ -59,6 +59,16 @@ def format_lead_message(platform: str, user_id: str, lead_data: dict, username: 
         
     raw_phone = lead_data.get('phone')
     phone_text = format_phone(raw_phone) or (raw_phone if raw_phone else "🔥 НЕ УКАЗАН 🔥")
+    
+    # Форматируем extras (дополнительные услуги)
+    extras = lead_data.get('extras', [])
+    if isinstance(extras, str):
+        import json
+        try:
+            extras = json.loads(extras)
+        except:
+            extras = [extras] if extras else []
+    extras_text = ", ".join(extras) if extras else "—"
 
     msg = (
         f"🔥 <b>НОВАЯ ЗАЯВКА ({source})</b>\n\n"
@@ -68,7 +78,8 @@ def format_lead_message(platform: str, user_id: str, lead_data: dict, username: 
         f"👥 <b>Гостей:</b> {lead_data.get('kids_count', '?')} дет. + {lead_data.get('adults_count', '?')} взр.\n"
         f"🏠 <b>Формат:</b> {lead_data.get('format', 'Не указан')}\n"
         f"👤 <b>Заказчик:</b> {lead_data.get('customer_name', 'Не указан')}\n"
-        f"📱 <b>Телефон:</b> {phone_text}\n\n"
+        f"📱 <b>Телефон:</b> {phone_text}\n"
+        f"✨ <b>Доп. услуги:</b> {extras_text}\n\n"
         f"🔗 <b>Профиль:</b> {contact_info}\n"
         f"🕒 <i>Создано: {datetime.now().strftime('%d.%m.%Y %H:%M')}</i>"
     )
