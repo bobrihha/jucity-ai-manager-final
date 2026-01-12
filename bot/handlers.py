@@ -105,19 +105,45 @@ async def birthday_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     prices = get_prices_from_knowledge()
     
-    # Устанавливаем intent = birthday для пользователя
     db = SessionLocal()
     try:
+        # 1. Проверяем, есть ли активная (незавершенная) заявка
+        active_lead = db.query(Lead).filter(
+            Lead.telegram_id == str(user.id),
+            Lead.park_id == "nn",
+            Lead.status.in_(["new", "contacted"]),
+            Lead.sent_to_manager == False
+        ).first()
+
+        if active_lead:
+            # Если есть черновик — спрашиваем пользователя
+            keyboard = [
+                [InlineKeyboardButton("✏️ Продoлжить текущую", callback_data="lead_continue")],
+                [InlineKeyboardButton("➕ Создать новую", callback_data="lead_new")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(
+                f"🎉 <b>У вас есть незавершенная заявка!</b>\n\n"
+                f"Мы уже начали оформлять праздник (ID: {active_lead.id}).\n"
+                f"Хотите продолжить её заполнение или начать новую?",
+                reply_markup=reply_markup,
+                parse_mode="HTML"
+            )
+            return  # Прерываем, ждем нажатия кнопки
+
+        # 2. Если нет активной заявки — начинаем новую (как раньше)
         session = db.query(DBSession).filter(DBSession.telegram_id == str(user.id)).first()
         if not session:
             session = DBSession(telegram_id=str(user.id), park_id="nn")
             db.add(session)
         session.intent = "birthday"
-        session.lead_data = {}
+        session.lead_data = {}  # Очищаем контекст, так как это новая заявка
         db.commit()
     finally:
         db.close()
     
+    # Стандартное приветствие для НОВОЙ заявки
     await update.message.reply_text(
         "🎉 <b>День рождения в Джунгли Сити!</b>\n\n"
         "Что входит (от 6 детей):\n"
@@ -288,7 +314,83 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = query.message.chat_id
     
     try:
-        if query.data == "intent_birthday":
+    try:
+        if query.data == "lead_continue":
+            # Пользователь решил продолжить текущую заявку
+            if session:
+                session.intent = "birthday"
+                # lead_data НЕ сбрасываем, чтобы бот знал контекст
+                
+                # Загружаем данные из существующего лида
+                active_lead = db.query(Lead).filter(
+                    Lead.telegram_id == str(query.from_user.id),
+                    Lead.park_id == "nn",
+                    Lead.status.in_(["new", "contacted"]),
+                    Lead.sent_to_manager == False
+                ).first()
+                if active_lead:
+                    session.lead_data = lead_to_dict(active_lead)
+                
+                db.commit()
+
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            
+            await update.callback_query.message.reply_text(
+                "Отлично! Продолжаем оформление. На чем мы остановились? 😊"
+            )
+
+        elif query.data == "lead_new":
+            # Пользователь хочет новую заявку. Старую помечаем как "deferred" (отложенную)
+            active_lead = db.query(Lead).filter(
+                Lead.telegram_id == str(query.from_user.id),
+                Lead.park_id == "nn",
+                Lead.status.in_(["new", "contacted"]),
+                Lead.sent_to_manager == False
+            ).first()
+            
+            if active_lead:
+                active_lead.status = "deferred"
+                db.commit()
+            
+            if session:
+                session.intent = "birthday"
+                session.lead_data = {}  # Сбрасываем для новой
+                db.commit()
+
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            
+            # Запускаем стандартный флоу новой заявки (картинка + текст)
+            prices = get_prices_from_knowledge()
+            caption = (
+                "🎉 <b>День рождения в Джунгли Сити!</b>\n\n"
+                "Что входит (от 6 детей):\n"
+                "✅ Комната на 3 часа — БЕСПЛАТНО\n"
+                "✅ Именинник — БЕСПЛАТНО (только при 7+ детях!)\n"
+                "✅ Взрослые — БЕСПЛАТНО\n"
+                "✅ Безлимит на все аттракционы весь день\n\n"
+                f"<b>Цены на билеты:</b>\n"
+                f"• Будни (вт-пт): {prices['weekday']} ₽\n"
+                f"• Выходные: {prices['weekend']} ₽\n"
+                f"• Понедельник: {prices['monday']} ₽\n\n"
+                "ℹ️ Если детей меньше 7 — можно забронировать столик в ресторане (именинник со скидкой 50% на вход)\n\n"
+                "Чтобы рассчитать и забронировать — ответьте:\n"
+                "📅 <b>На какую дату планируете праздник?</b>"
+            )
+            with open(IMAGES["birthday"], 'rb') as photo_file:
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo_file,
+                    caption=caption,
+                    parse_mode="HTML"
+                )
+
+        elif query.data == "intent_birthday":
             if session:
                 session.intent = "birthday"
                 db.commit()

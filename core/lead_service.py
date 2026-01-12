@@ -241,11 +241,12 @@ def get_or_create_lead(user_id: str, source: str = "telegram", park_id: str = "n
     # 1. Гарантируем клиента
     client = ensure_client(db, telegram_id=tg_id, vk_id=vk_uid, username=username, first_name=first_name, last_name=last_name)
     
-    # Ищем активный лид
+    # Ищем активный лид (который ещё НЕ отправлен менеджеру)
     lead = db.query(Lead).filter(
         Lead.telegram_id == str(user_id),
         Lead.park_id == park_id,
-        Lead.status.in_(["new", "contacted"])
+        Lead.status.in_(["new", "contacted"]),
+        Lead.sent_to_manager == False  # ВАЖНО: Игнорируем уже отправленные заявки
     ).first()
     
     if not lead:
