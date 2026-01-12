@@ -314,7 +314,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = query.message.chat_id
     
     try:
-    try:
         if query.data == "lead_continue":
             # Пользователь решил продолжить текущую заявку
             if session:
