@@ -81,7 +81,30 @@ class RAGSystem:
         return documents
     
     def get_context(self, query: str, intent: str = None) -> str:
-        """Получить контекст для LLM из релевантных документов."""
+        """Получить контекст для LLM из релевантных документов (с кешированием)."""
+        from time import time
+        
+        # Инициализация кеша при первом вызове
+        if not hasattr(self, '_cache'):
+            self._cache = {}
+            self._cache_ttl = 300  # 5 минут
+        
+        # Проверяем кеш
+        cache_key = (query, intent)
+        now = time()
+        
+        if cache_key in self._cache:
+            result, timestamp = self._cache[cache_key]
+            if now - timestamp < self._cache_ttl:
+                return result
+        
+        # Очищаем старые записи (максимум 100)
+        if len(self._cache) > 100:
+            old_keys = [k for k, (_, ts) in self._cache.items() if now - ts > self._cache_ttl]
+            for k in old_keys:
+                del self._cache[k]
+        
+        # Получаем контекст
         docs = self.search(query, intent, n_results=3)
         
         if not docs:
@@ -96,7 +119,12 @@ class RAGSystem:
             else:
                 context_parts.append(content)
         
-        return "\n\n".join(context_parts)
+        result = "\n\n".join(context_parts)
+        
+        # Кешируем
+        self._cache[cache_key] = (result, now)
+        
+        return result
     
     def index_knowledge_files(self):
         """Индексировать файлы базы знаний из папки knowledge/."""

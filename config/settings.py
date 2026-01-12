@@ -21,7 +21,7 @@ VK_GROUP_ID = os.getenv("VK_GROUP_ID", "")
 
 # OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 # Парк по умолчанию
 DEFAULT_PARK_ID = os.getenv("DEFAULT_PARK_ID", "nn")
