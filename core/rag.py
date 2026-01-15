@@ -57,9 +57,9 @@ class RAGSystem:
         # Формируем фильтр по категории
         where_filter = None
         if intent == "birthday":
-            where_filter = {"$or": [{"category": "birthday"}, {"category": "shared"}]}
+            where_filter = {"$or": [{"category": "birthday"}, {"category": "shared"}, {"category": "services"}]}
         elif intent == "general":
-            where_filter = {"$or": [{"category": "general"}, {"category": "shared"}]}
+            where_filter = {"$or": [{"category": "general"}, {"category": "shared"}, {"category": "services"}]}
         
         results = self.collection.query(
             query_texts=[query],
@@ -136,7 +136,7 @@ class RAGSystem:
         
         count = 0
         
-        for category in ["general", "birthday", "shared", "events"]:
+        for category in ["general", "birthday", "shared", "events", "services"]:
             category_path = knowledge_path / category
             if not category_path.exists():
                 continue
