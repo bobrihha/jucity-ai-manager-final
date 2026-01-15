@@ -7,19 +7,38 @@ import re
 
 from core import detect_intent, agent, rag, lead_collector
 from db import SessionLocal, Session as DBSession, Message, Lead, BotCommand
+from sqlalchemy.orm.attributes import flag_modified
 from config.settings import MANAGER_CHAT_ID
 from core.notifications import (
     send_to_managers, 
     format_lead_message, 
     format_escalation_message, 
-    needs_human_escalation
+    needs_human_escalation,
+    needs_lost_item_flow,
+    format_lost_item_message,
+    needs_booking_change_request,
+    get_booking_change_type,
+    format_booking_change_message,
+    needs_photo_request,
+    needs_photo_order,
+    format_photo_request_message,
+    format_photo_order_message,
+    needs_partnership_proposal,
+    format_partnership_message
 )
 from core.lead_service import (
     get_or_create_lead,
     update_lead_from_data,
     mark_lead_sent_to_manager,
-    lead_to_dict
+    lead_to_dict,
+    save_amocrm_deal_id,
+    save_amocrm_contact_id,
+    mark_status_notified,
+    get_active_lead_info,
+    force_create_new_lead,
+    get_last_known_phone
 )
+from core.amocrm import send_lead_to_amocrm, amocrm_client
 
 logger = logging.getLogger(__name__)
 
@@ -496,6 +515,48 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
             
+            # Проверяем есть ли клиент в AmoCRM (возвратный клиент)
+            contact = await amocrm_client.find_contact_by_telegram_id(query.from_user.id)
+            found_phone = None
+            found_name = None
+            
+            if contact:
+                contact_info = amocrm_client.get_contact_info(contact)
+                found_phone = contact_info.get("phone")
+                found_name = contact_info.get("name") or query.from_user.first_name
+                
+                if found_phone:
+                    # Создаём лид и сохраняем ТОЛЬКО имя (телефон после подтверждения)
+                    from core.lead_service import update_lead_from_data
+                    current_lead = get_or_create_lead(query.from_user.id, park_id="nn", username=query.from_user.username)
+                    update_lead_from_data(current_lead.id, {
+                        "customer_name": found_name
+                    })
+                    
+                    # Сохраняем телефон и lead_id в context для подтверждения
+                    context.user_data["pending_phone_confirm"] = found_phone
+                    context.user_data["pending_lead_id"] = current_lead.id
+                    context.user_data["pending_customer_name"] = found_name
+                    
+                    logger.info(f"Found returning customer: {found_name}, phone={found_phone}, asking for confirmation")
+                    
+                    # Спрашиваем подтверждение телефона
+                    phone_display = f"+7 {found_phone[-10:-7]} {found_phone[-7:-4]}-{found_phone[-4:-2]}-{found_phone[-2:]}" if len(found_phone) >= 10 else found_phone
+                    keyboard = [
+                        [InlineKeyboardButton(f"✅ Да, {phone_display}", callback_data="confirm_returning_phone_yes")],
+                        [InlineKeyboardButton("📱 Указать другой номер", callback_data="confirm_returning_phone_no")]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
+                    greeting = f"Рады снова видеть вас, {found_name}! 💚\n\n" if found_name else "Рады снова вас видеть! 💚\n\n"
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=f"{greeting}📱 Актуален ли этот номер телефона для связи?\n\n{phone_display}",
+                        reply_markup=reply_markup
+                    )
+                    return  # Ждём подтверждения
+            
+            # Если контакт не найден или нет телефона — стандартный флоу
             # Отправляем фото с текстом
             caption = (
                 "💜💚 Отлично! День рождения в Джунглях — это радость и вау-эмоции! 💚💜\n\n"
@@ -518,7 +579,202 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     photo=photo_file,
                     caption=caption
                 )
+        
+        # Обработка выбора: изменить текущую заявку или создать новую
+        elif query.data == "booking_modify":
+            # Пользователь хочет изменить текущую заявку
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
             
+            pending_date = context.user_data.get("pending_new_date", "")
+            
+            # Извлекаем дату из сообщения
+            import re
+            date_pattern = r'\b(\d{1,2})\s*(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\b'
+            match = re.search(date_pattern, pending_date.lower())
+            if match:
+                extracted_date = f"{match.group(1)} {match.group(2)}"
+                # Обновляем дату в текущем лиде
+                active_info = get_active_lead_info(update.effective_user.id)
+                if active_info:
+                    from core.lead_service import update_lead_from_data
+                    update_lead_from_data(active_info["lead_id"], {"event_date": extracted_date})
+                    logger.info(f"Updated Lead #{active_info['lead_id']} with new date: {extracted_date}")
+            
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"✅ Отлично, изменила дату в вашей заявке!\n\n📅 Новая дата: {pending_date}\n\nЕсли нужно что-то ещё изменить — просто напишите! 😊"
+            )
+            # Очищаем pending
+            context.user_data.pop("pending_new_date", None)
+            
+        elif query.data == "booking_new":
+            # Пользователь хочет создать новое бронирование
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            
+            pending_date = context.user_data.get("pending_new_date", "")
+            
+            # Извлекаем дату
+            import re
+            date_pattern = r'\b(\d{1,2})\s*(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\b'
+            match = re.search(date_pattern, pending_date.lower())
+            extracted_date = f"{match.group(1)} {match.group(2)}" if match else pending_date
+            
+            # Получаем данные из старой заявки (имя) и телефон из ЛЮБОЙ заявки
+            old_lead_info = get_active_lead_info(update.effective_user.id)
+            old_name = old_lead_info.get("customer_name") if old_lead_info else None
+            
+            # Ищем последний известный телефон (может быть в любой заявке)
+            old_phone = get_last_known_phone(update.effective_user.id)
+            logger.info(f"Creating new booking: name={old_name}, last known phone={old_phone}")
+            
+            # Создаём новую заявку с датой
+            new_lead = force_create_new_lead(
+                update.effective_user.id,
+                park_id="nn",
+                username=update.effective_user.username,
+                source="telegram"
+            )
+            
+            # Сохраняем дату и имя (телефон НЕ сохраняем — ждём подтверждения!)
+            from core.lead_service import update_lead_from_data
+            update_data = {"event_date": extracted_date}
+            if old_name:
+                update_data["customer_name"] = old_name
+            update_lead_from_data(new_lead.id, update_data)
+            logger.info(f"Created new Lead #{new_lead.id} with date: {extracted_date}")
+            
+            # Если есть старый телефон — запоминаем для подтверждения
+            if old_phone:
+                context.user_data["pending_phone_confirm"] = old_phone
+                context.user_data["pending_lead_id"] = new_lead.id
+                logger.info(f"Set pending_phone_confirm: {old_phone} for lead {new_lead.id}")
+            
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"✨ Отлично, начинаем новое бронирование!\n\n📅 Дата: {extracted_date}\n\n👶 Сколько детей будет на празднике, включая именинника?"
+            )
+            # Очищаем pending date
+            context.user_data.pop("pending_new_date", None)
+        
+        # Подтверждение телефона для нового бронирования
+        elif query.data == "confirm_phone_yes":
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            
+            pending_phone = context.user_data.get("pending_phone_confirm")
+            pending_lead_id = context.user_data.get("pending_lead_id")
+            
+            if pending_phone and pending_lead_id:
+                # Сохраняем телефон в лид
+                from core.lead_service import update_lead_from_data
+                update_lead_from_data(pending_lead_id, {"phone": pending_phone})
+                logger.info(f"Lead #{pending_lead_id} confirmed phone: {pending_phone}")
+                
+                # Отправляем в AmoCRM
+                lead_data = lead_to_dict(get_or_create_lead(update.effective_user.id))
+                if lead_data.get("phone"):
+                    result = await send_lead_to_amocrm(
+                        lead_data, 
+                        telegram_id=update.effective_user.id,
+                        username=update.effective_user.username
+                    )
+                    if result and result[0]:
+                        deal_id, contact_id = result
+                        save_amocrm_deal_id(pending_lead_id, deal_id)
+                        if contact_id:
+                            save_amocrm_contact_id(pending_lead_id, contact_id)
+                        logger.info(f"Lead #{pending_lead_id} sent to AmoCRM, deal_id: {deal_id}")
+            
+            # Очищаем pending
+            context.user_data.pop("pending_phone_confirm", None)
+            context.user_data.pop("pending_lead_id", None)
+            
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="✅ Отлично! Заявка отправлена феям праздников! 🧚‍♀️\n\nДавайте выберем формат праздника? 💚"
+            )
+        
+        elif query.data == "confirm_phone_no":
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            
+            # Очищаем pending телефон
+            context.user_data.pop("pending_phone_confirm", None)
+            
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="📱 Хорошо! Напишите, пожалуйста, ваш номер телефона для связи."
+            )
+        
+        # Подтверждение телефона для ВОЗВРАТНОГО клиента (найден в AmoCRM)
+        elif query.data == "confirm_returning_phone_yes":
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            
+            pending_phone = context.user_data.get("pending_phone_confirm")
+            pending_lead_id = context.user_data.get("pending_lead_id")
+            pending_name = context.user_data.get("pending_customer_name")
+            
+            if pending_phone and pending_lead_id:
+                # Сохраняем телефон в лид
+                from core.lead_service import update_lead_from_data
+                update_lead_from_data(pending_lead_id, {"phone": pending_phone})
+                logger.info(f"Lead #{pending_lead_id} confirmed returning phone: {pending_phone}")
+            
+            # Очищаем pending
+            context.user_data.pop("pending_phone_confirm", None)
+            context.user_data.pop("pending_lead_id", None)
+            context.user_data.pop("pending_customer_name", None)
+            
+            # Отправляем стандартное сообщение о бронировании
+            caption = (
+                "💜💚 Отлично! День рождения в Джунглях — это радость и вау-эмоции! 💚💜\n\n"
+                "У нас есть 2 формата праздника — выбирайте, что подойдёт именно вам 💚\n\n"
+                "🏠 ТЕМАТИЧЕСКАЯ КОМНАТА (3 часа)\n"
+                "—предоставляется при оплате 6 полных детских билетов\n"
+                "— от 7 детей — ИМЕНИННИК БЕСПЛАТНО\n"
+                "— безлимит на аттракционы 💚\n\n"
+                "🍰 Столик в ресторане\n"
+                "— без ограничения по времени\n"
+                "— именинник — скидка 50% на вход\n"
+                "— безлимит на аттракционы 💚\n\n"
+                "✨ Аниматоры, торт, шары, аквагрим — по желанию.\n"
+                "Давайте подберём идеальный вариант для вас 💜\n\n"
+                "📅 На какую дату планируете праздник?"
+            )
+            with open(IMAGES["birthday"], 'rb') as photo_file:
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo_file,
+                    caption=caption
+                )
+        
+        elif query.data == "confirm_returning_phone_no":
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            
+            # Очищаем pending телефон (оставляем lead_id для сохранения нового номера)
+            context.user_data.pop("pending_phone_confirm", None)
+            context.user_data["waiting_for_new_phone"] = True
+            
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="📱 Хорошо! Напишите, пожалуйста, ваш актуальный номер телефона для связи."
+            )
         elif query.data == "intent_general":
             if session:
                 session.intent = "general"
@@ -578,7 +834,47 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
             
-            # Ищем активные лиды
+            # Сначала пробуем найти контакт в AmoCRM по telegram_id
+            contact = await amocrm_client.find_contact_by_telegram_id(query.from_user.id)
+            
+            if contact:
+                # Получаем все сделки этого контакта из AmoCRM
+                deals = await amocrm_client.get_deals_for_contact(contact["id"])
+                
+                if deals:
+                    for deal in deals[:3]:  # Показываем до 3х последних
+                        # Форматируем инфо из AmoCRM
+                        text = (
+                            f"📋 <b>Бронирование #{deal.get('deal_id')}</b>\n\n"
+                            f"📅 Дата: {deal.get('event_date', 'Не указана')}\n"
+                            f"🕐 Время: {deal.get('event_time', 'Не указано')}\n"
+                            f"👶 Детей: {deal.get('kids_count', 'Не указано')}\n"
+                            f"👨‍👩‍👧 Взрослых: {deal.get('adults_count', 0)}\n"
+                            f"🏠 Комната: {deal.get('room', 'Не выбрана')}\n"
+                            f"🎁 Доп. услуги: {deal.get('extras', 'Нет')}\n"
+                        )
+                        
+                        # Ищем lead_id в локальной БД для кнопок изменения
+                        local_lead = db.query(Lead).filter(
+                            Lead.amocrm_deal_id == str(deal["deal_id"])
+                        ).first()
+                        lead_id = local_lead.id if local_lead else deal["deal_id"]
+                        
+                        keyboard = [
+                            [InlineKeyboardButton("✏️ Изменить дату/время", callback_data=f"change_{lead_id}_datetime")],
+                            [InlineKeyboardButton("👥 Изменить кол-во гостей", callback_data=f"change_{lead_id}_guests")],
+                            [InlineKeyboardButton("🎁 Добавить услуги", callback_data=f"change_{lead_id}_extras")],
+                            [InlineKeyboardButton("❌ Отменить бронь", callback_data=f"change_{lead_id}_cancel")]
+                        ]
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=text,
+                            reply_markup=InlineKeyboardMarkup(keyboard),
+                            parse_mode="HTML"
+                        )
+                    return
+            
+            # Fallback: ищем в локальной БД
             leads = db.query(Lead).filter(
                 Lead.telegram_id == str(query.from_user.id),
                 Lead.status.in_(["new", "contacted", "booked"]),
@@ -642,6 +938,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 await send_to_managers(msg_text)
                 
+                # Создаём задачу в AmoCRM если есть сделка
+                if lead.amocrm_deal_id:
+                    try:
+                        task_text = f"Клиент просит: {change_type_text.get(change_type, change_type)} (из Telegram)"
+                        await amocrm_client.create_task(int(lead.amocrm_deal_id), task_text)
+                    except Exception as e:
+                        logger.error(f"Failed to create AmoCRM task: {e}")
+                
                 # Отвечаем пользователю
                 if change_type == "cancel":
                     response_text = (
@@ -660,6 +964,46 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.message.reply_text(
                     "К сожалению, бронирование не найдено. Попробуйте /booking ещё раз."
                 )
+
+        elif query.data == "lost_phone_yes":
+            # Подтвердил телефон — отправляем уведомление
+            lost_data = session.lead_data or {}
+            user = query.from_user
+            user_name = user.first_name or "Гость"
+            
+            msg = format_lost_item_message(
+                platform="telegram",
+                user_id=str(user.id),
+                user_name=user_name,
+                lost_date=lost_data.get("lost_date"),
+                lost_location=lost_data.get("lost_location"),
+                lost_description=lost_data.get("lost_description"),
+                phone=lost_data.get("phone"),
+                username=user.username
+            )
+            await send_to_managers(msg)
+            
+            # Сбрасываем режим
+            session.intent = "unknown"
+            session.lead_data = {}
+            db.commit()
+            
+            await query.message.reply_text(
+                "✅ Спасибо! Мы передали информацию в бюро находок.\n\n"
+                "Менеджер свяжется с вами, если вещь найдётся. 💚"
+            )
+
+        elif query.data == "lost_phone_no":
+            # Не подтвердил — запрашиваем новый номер
+            lost_data = session.lead_data or {}
+            lost_data["lost_step"] = "phone"
+            lost_data.pop("phone", None)
+            session.lead_data = lost_data
+            flag_modified(session, "lead_data")
+            db.commit()
+            
+            await query.message.reply_text("📱 Укажите номер телефона для связи:")
+
     finally:
         db.close()
 
@@ -733,6 +1077,137 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         # -----------------------------------------------
         
+        # ============ ПОТЕРЯШКИ — обработка потерянных вещей ============
+        # Проверяем, находимся ли мы уже в режиме опроса
+        lost_data = session.lead_data or {}
+        lost_step = lost_data.get("lost_step")
+        
+        if lost_step:
+            # Проверяем, не хочет ли пользователь выйти из опроса
+            exit_keywords = [
+                "ничего не потерял", "ничего не потеряла", "ничего не теряла", "ничего не терял",
+                "не потерял", "не потеряла", "не теряла", "не терял",
+                "я не про это", "я о другом", "хотел спросить", "хотела спросить",
+                "я спрашиваю", "речь не об этом", "не об этом",
+                "отмена", "стоп", "хватит", "выход", "exit", "cancel",
+                "можно купить", "где купить", "продаёте", "продаете",
+            ]
+            message_lower = message_text.lower()
+            if any(kw in message_lower for kw in exit_keywords):
+                # Сбрасываем режим потеряшек
+                session.intent = "unknown"
+                session.lead_data = {}
+                db.commit()
+                
+                await update.message.reply_text(
+                    "Ой, простите за недопонимание! 😊\n\n"
+                    "Чем могу помочь? Спрашивайте — я отвечу на любые вопросы о парке, ценах или празднике! 💚"
+                )
+                return
+            
+            # Мы в процессе опроса о потерянной вещи
+            user_name = user.first_name or "Гость"
+            
+            if lost_step == "date":
+                lost_data["lost_date"] = message_text
+                lost_data["lost_step"] = "location"
+                session.lead_data = lost_data
+                flag_modified(session, "lead_data")
+                db.commit()
+                await update.message.reply_text("📍 В каком примерно месте вы могли оставить вещь?\n(аттракцион, комната, ресторан и т.д.)")
+                return
+                
+            elif lost_step == "location":
+                lost_data["lost_location"] = message_text
+                lost_data["lost_step"] = "description"
+                session.lead_data = lost_data
+                flag_modified(session, "lead_data")
+                db.commit()
+                await update.message.reply_text("🔍 Опишите, что именно потеряли?\n(цвет, размер, особенности)")
+                return
+                
+            elif lost_step == "description":
+                lost_data["lost_description"] = message_text
+                lost_data["lost_step"] = "phone"
+                session.lead_data = lost_data
+                flag_modified(session, "lead_data")
+                db.commit()
+                
+                # Проверяем телефон в CRM
+                try:
+                    contact = await amocrm_client.find_contact_by_telegram_id(user.id)
+                    if contact:
+                        contact_info = amocrm_client.get_contact_info(contact)
+                        phone = contact_info.get("phone")
+                        if phone:
+                            lost_data["phone"] = phone
+                            lost_data["lost_step"] = "confirm_phone"
+                            session.lead_data = lost_data
+                            flag_modified(session, "lead_data")
+                            db.commit()
+                            
+                            keyboard = [
+                                [InlineKeyboardButton("✅ Да", callback_data="lost_phone_yes"),
+                                 InlineKeyboardButton("❌ Другой", callback_data="lost_phone_no")]
+                            ]
+                            await update.message.reply_text(
+                                f"📱 Для связи использовать номер {phone}?",
+                                reply_markup=InlineKeyboardMarkup(keyboard)
+                            )
+                            return
+                except Exception as e:
+                    logger.error(f"Failed to check CRM for lost item: {e}")
+                
+                # Нет телефона — запрашиваем
+                await update.message.reply_text("📱 Укажите номер телефона для связи:")
+                return
+                
+            elif lost_step == "phone":
+                lost_data["phone"] = message_text
+                
+                # Отправляем уведомление
+                msg = format_lost_item_message(
+                    platform="telegram",
+                    user_id=user_id,
+                    user_name=user_name,
+                    lost_date=lost_data.get("lost_date"),
+                    lost_location=lost_data.get("lost_location"),
+                    lost_description=lost_data.get("lost_description"),
+                    phone=lost_data.get("phone"),
+                    username=user.username
+                )
+                await send_to_managers(msg)
+                
+                # Сбрасываем режим
+                session.intent = "unknown"
+                session.lead_data = {}
+                db.commit()
+                
+                await update.message.reply_text(
+                    "✅ Спасибо! Мы передали информацию в бюро находок.\n\n"
+                    "Менеджер свяжется с вами, если вещь найдётся. 💚"
+                )
+                return
+        
+        # Проверяем триггер потеряшек (начало опроса)
+        # Если уже был в режиме lost_item но lost_step нет — сбросим и начнём заново
+        if session.intent == "lost_item" and not lost_step:
+            session.intent = "unknown"
+            db.commit()
+        
+        if needs_lost_item_flow(message_text):
+            session.intent = "lost_item"
+            session.lead_data = {"lost_step": "date"}
+            flag_modified(session, "lead_data")
+            db.commit()
+            
+            await update.message.reply_text(
+                "Ой, как жаль! 😔 Давайте попробуем найти вашу вещь.\n\n"
+                "📅 Когда вы были в парке? (напишите дату)"
+            )
+            return
+        # ============ КОНЕЦ ПОТЕРЯШКИ ============
+        
         # Проверяем запрос живого менеджера
         if needs_human_escalation(message_text):
             # Отправляем уведомление менеджерам
@@ -754,7 +1229,308 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
+        # ============ ЗАПРОСЫ НА ИЗМЕНЕНИЕ БРОНИРОВАНИЯ ============
+        # Проверяем, просит ли клиент изменить/отменить бронь текстом
+        if needs_booking_change_request(message_text):
+            user_name = user.first_name or "Гость"
+            change_type = get_booking_change_type(message_text)
+            
+            # Ищем сделку пользователя в AmoCRM
+            deal_id = None
+            phone = None
+            try:
+                contact = await amocrm_client.find_contact_by_telegram_id(user.id)
+                if contact:
+                    contact_info = amocrm_client.get_contact_info(contact)
+                    phone = contact_info.get("phone")
+                    
+                    # Получаем последнюю сделку
+                    deals = await amocrm_client.get_contact_deals(contact["id"])
+                    if deals:
+                        deal_id = str(deals[0].get("id", ""))
+                        
+                        # Создаём задачу в AmoCRM
+                        task_text = f"Клиент просит: {change_type} (из Telegram)"
+                        await amocrm_client.create_task(int(deal_id), task_text)
+            except Exception as e:
+                logger.error(f"Error checking AmoCRM for booking change: {e}")
+            
+            # Отправляем уведомление менеджерам
+            msg = format_booking_change_message(
+                platform="telegram",
+                user_id=user_id,
+                user_name=user_name,
+                change_type=change_type,
+                message_text=message_text,
+                deal_id=deal_id,
+                phone=phone,
+                username=user.username
+            )
+            await send_to_managers(msg)
+            
+            # Отвечаем пользователю
+            await update.message.reply_text(
+                f"✅ Ваш запрос на «{change_type}» передан менеджеру!\n\n"
+                "Мы свяжемся с вами в ближайшее время для уточнения деталей. 📞"
+            )
+            return
+        # ============ КОНЕЦ ЗАПРОСОВ НА ИЗМЕНЕНИЕ ============
+        
+        # ============ ОБРАБОТКА ЗАПРОСОВ ФОТОГРАФИЙ ============
+        # Проверяем, уже в режиме опроса про фото?
+        photo_data = session.lead_data or {}
+        photo_step = photo_data.get("photo_step")
+        
+        if photo_step:
+            user_name = user.first_name or "Гость"
+            
+            if photo_step == "phone":
+                # Валидируем телефон
+                phone_pattern = r'[\d\+\(\)\-\s]{7,}'
+                if re.search(phone_pattern, message_text):
+                    photo_data["phone"] = message_text
+                    photo_type = photo_data.get("type", "request")
+                    
+                    if photo_type == "order":
+                        # Заказ фотографа — создаём заявку
+                        msg = format_photo_order_message(
+                            platform="telegram",
+                            user_id=user_id,
+                            user_name=user_name,
+                            phone=message_text,
+                            username=user.username
+                        )
+                        await send_to_managers(msg)
+                        
+                        # Создаём лид и отправляем в AmoCRM
+                        try:
+                            lead = get_or_create_lead(user_id, source="telegram", park_id="nn")
+                            lead.phone = message_text
+                            lead.name = user_name
+                            lead.extras = "Фотограф (2500₽/час)"
+                            db.commit()
+                            
+                            # Отправляем в AmoCRM
+                            await send_lead_to_amocrm(
+                                lead_data={
+                                    "customer_name": user_name,
+                                    "phone": message_text,
+                                    "extras": "📸 Заказ фотографа (2500₽/час)",
+                                    "source": "telegram"
+                                },
+                                telegram_id=user.id,
+                                username=user.username
+                            )
+                        except Exception as e:
+                            logger.error(f"Error creating photo order lead: {e}")
+                        
+                        await update.message.reply_text(
+                            "📸 Отлично! Мы передали вашу заявку в отдел праздников.\n\n"
+                            "Менеджер свяжется с вами, чтобы подобрать удобное время для фотосессии! 💚"
+                        )
+                    else:
+                        # Запрос фото — уведомление менеджерам
+                        msg = format_photo_request_message(
+                            platform="telegram",
+                            user_id=user_id,
+                            user_name=user_name,
+                            phone=message_text,
+                            description=photo_data.get("description"),
+                            username=user.username
+                        )
+                        await send_to_managers(msg)
+                        
+                        await update.message.reply_text(
+                            "📷 Спасибо! Мы передали ваш запрос.\n\n"
+                            "Менеджер свяжется с вами по поводу фотографий! 💚"
+                        )
+                    
+                    # Сбрасываем режим
+                    session.intent = "unknown"
+                    session.lead_data = {}
+                    db.commit()
+                    return
+                else:
+                    await update.message.reply_text("📱 Пожалуйста, укажите корректный номер телефона:")
+                    return
+        
+        # Проверяем триггер заказа фотографа (сначала — более специфичный)
+        if needs_photo_order(message_text):
+            user_name = user.first_name or "Гость"
+            
+            # Проверяем телефон в CRM
+            phone = None
+            try:
+                contact = await amocrm_client.find_contact_by_telegram_id(user.id)
+                if contact:
+                    contact_info_crm = amocrm_client.get_contact_info(contact)
+                    phone = contact_info_crm.get("phone")
+            except Exception as e:
+                logger.error(f"Error finding contact for photo order: {e}")
+            
+            if phone:
+                # Телефон есть — сразу отправляем
+                msg = format_photo_order_message(
+                    platform="telegram",
+                    user_id=user_id,
+                    user_name=user_name,
+                    phone=phone,
+                    username=user.username
+                )
+                await send_to_managers(msg)
+                
+                # Создаём лид и отправляем в AmoCRM
+                try:
+                    lead = get_or_create_lead(user_id, source="telegram", park_id="nn")
+                    lead.phone = phone
+                    lead.name = user_name
+                    lead.extras = "Фотограф (2500₽/час)"
+                    db.commit()
+                    
+                    # Отправляем в AmoCRM
+                    await send_lead_to_amocrm(
+                        lead_data={
+                            "customer_name": user_name,
+                            "phone": phone,
+                            "extras": "📸 Заказ фотографа (2500₽/час)",
+                            "source": "telegram"
+                        },
+                        telegram_id=user.id,
+                        username=user.username
+                    )
+                except Exception as e:
+                    logger.error(f"Error creating photo order lead: {e}")
+                
+                await update.message.reply_text(
+                    "📸 Отличная идея! Фотографии получаются яркие и эмоциональные — отличная память!\n\n"
+                    "💰 Стоимость фотографа: *2500₽/час*\n\n"
+                    "Мы передали вашу заявку в отдел праздников, вам перезвонят и подберут удобное время! 💚",
+                    parse_mode="Markdown"
+                )
+            else:
+                # Телефона нет — запрашиваем
+                session.intent = "photo_order"
+                session.lead_data = {"photo_step": "phone", "type": "order"}
+                flag_modified(session, "lead_data")
+                db.commit()
+                
+                await update.message.reply_text(
+                    "📸 Отличная идея! Фотографии получаются яркие и эмоциональные — отличная память!\n\n"
+                    "💰 Стоимость фотографа: *2500₽/час*\n\n"
+                    "📱 Оставьте ваш номер телефона, мы передадим его в отдел праздников — вам перезвонят и подберут удобное время.",
+                    parse_mode="Markdown"
+                )
+            return
+        
+        # Проверяем триггер запроса фотографий (получение готовых фото)
+        if needs_photo_request(message_text):
+            user_name = user.first_name or "Гость"
+            
+            # Проверяем телефон в CRM
+            phone = None
+            try:
+                contact = await amocrm_client.find_contact_by_telegram_id(user.id)
+                if contact:
+                    contact_info_crm = amocrm_client.get_contact_info(contact)
+                    phone = contact_info_crm.get("phone")
+            except Exception as e:
+                logger.error(f"Error finding contact for photo request: {e}")
+            
+            if phone:
+                # Телефон есть — сразу отправляем уведомление
+                msg = format_photo_request_message(
+                    platform="telegram",
+                    user_id=user_id,
+                    user_name=user_name,
+                    phone=phone,
+                    description=message_text[:200],
+                    username=user.username
+                )
+                await send_to_managers(msg)
+                
+                await update.message.reply_text(
+                    "📷 Понимаю, что вы ждёте свои фотографии!\n\n"
+                    "Мы передали ваш запрос, с вами свяжутся в ближайшее время. 💚"
+                )
+            else:
+                # Телефона нет — запрашиваем
+                session.intent = "photo_request"
+                session.lead_data = {"photo_step": "phone", "type": "request", "description": message_text[:200]}
+                flag_modified(session, "lead_data")
+                db.commit()
+                
+                await update.message.reply_text(
+                    "📷 Понимаю, что вы ждёте свои фотографии!\n\n"
+                    "📱 Оставьте ваш номер телефона, чтобы мы могли связаться с вами:"
+                )
+            return
+        # ============ КОНЕЦ ОБРАБОТКИ ФОТОГРАФИЙ ============
+        
+        # ============ ОБРАБОТКА ПРЕДЛОЖЕНИЙ О СОТРУДНИЧЕСТВЕ ============
+        partnership_data = session.lead_data if session.lead_data else {}
+        partnership_step = partnership_data.get("partnership_step")
+        
+        # Если уже в процессе опроса по предложению
+        if partnership_step == "details":
+            # Получили суть предложения, запрашиваем телефон
+            session.lead_data = {
+                "partnership_step": "phone",
+                "proposal_text": message_text[:500]
+            }
+            flag_modified(session, "lead_data")
+            db.commit()
+            
+            await update.message.reply_text(
+                "📝 Отлично, записал!\n\n"
+                "📱 Оставьте, пожалуйста, ваш номер телефона для связи:"
+            )
+            return
+        
+        if partnership_step == "phone":
+            # Проверяем телефон
+            phone_pattern = r'[\d\+\(\)\-\s]{7,}'
+            if re.search(phone_pattern, message_text):
+                # Отправляем уведомление менеджерам
+                msg = format_partnership_message(
+                    platform="telegram",
+                    user_id=user_id,
+                    user_name=user_name,
+                    proposal_text=partnership_data.get("proposal_text", ""),
+                    phone=message_text,
+                    username=user.username
+                )
+                await send_to_managers(msg)
+                
+                # Сбрасываем состояние
+                session.intent = "unknown"
+                session.lead_data = {}
+                db.commit()
+                
+                await update.message.reply_text(
+                    "🤝 Спасибо за ваше предложение!\n\n"
+                    "Мы передали его руководству. С вами свяжутся в ближайшее время! 💚"
+                )
+                return
+            else:
+                await update.message.reply_text("📱 Пожалуйста, укажите корректный номер телефона:")
+                return
+        
+        # Проверяем триггер предложения о сотрудничестве
+        if needs_partnership_proposal(message_text):
+            session.intent = "partnership"
+            session.lead_data = {"partnership_step": "details"}
+            flag_modified(session, "lead_data")
+            db.commit()
+            
+            await update.message.reply_text(
+                "🤝 Здорово, что вы хотите сотрудничать с нами!\n\n"
+                "📝 Расскажите, пожалуйста, подробнее о вашем предложении — в чём его суть?"
+            )
+            return
+        # ============ КОНЕЦ ОБРАБОТКИ ПРЕДЛОЖЕНИЙ ============
+        
         # Определяем intent
+
         current_intent = session.intent
         intent_result = detect_intent(message_text)
         
@@ -804,27 +1580,157 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 last_name=user.last_name
             )
             
-            # Извлекаем данные из сообщения пользователя
-            extracted = agent.extract_lead_data(message_text, {})
+            # Проверяем: есть ли у юзера активная заявка с датой И упоминает ли он новую дату
+            active_lead_info = get_active_lead_info(user_id)
+            if active_lead_info and active_lead_info.get("event_date"):
+                # Проверяем, содержит ли сообщение дату (паттерн: число + месяц)
+                date_pattern = r'\b\d{1,2}\s*(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря|янв|фев|мар|апр|июн|июл|авг|сен|окт|ноя|дек)\b'
+                has_new_date = bool(re.search(date_pattern, message_text.lower()))
+                
+                # Также проверяем не относится ли это к изменению (ключевые слова)
+                is_modification = any(x in message_text.lower() for x in ["изменить", "поменять", "перенести", "другую дату", "сменить"])
+                
+                # Если есть новая дата и нет явного указания на изменение — спрашиваем
+                if has_new_date and not is_modification:
+                    keyboard = [
+                        [InlineKeyboardButton("🔄 Изменить текущую заявку", callback_data="booking_modify")],
+                        [InlineKeyboardButton("➕ Создать новое бронирование", callback_data="booking_new")]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
+                    existing_date = active_lead_info["event_date"]
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"Вижу, у вас уже есть заявка на {existing_date} 📅\n\nВы хотите изменить эту заявку или создать новое бронирование?",
+                        reply_markup=reply_markup
+                    )
+                    
+                    # Сохраняем новую дату в контексте для последующего использования
+                    context.user_data["pending_new_date"] = message_text
+                    return  # Ждём выбора пользователя
+            
+            # Извлекаем данные из ВСЕЙ истории переписки (не только последнего сообщения)
+            # Это критически важно т.к. имя, телефон, дата могут быть в разных сообщениях
+            current_lead_data = lead_to_dict(current_lead)
+            
+            # Собираем все сообщения пользователя из истории
+            user_messages = [msg["content"] for msg in history if msg["role"] == "user"][-10:]
+            full_conversation = "\n".join(user_messages)
+            
+            extracted = agent.extract_lead_data(full_conversation, current_lead_data)
             
             # Обновляем Lead в БД
             if extracted:
+                # Если имя не указано — берём из профиля
+                if not extracted.get("customer_name") and user.first_name:
+                    extracted["customer_name"] = user.first_name
+                
                 current_lead = update_lead_from_data(current_lead.id, extracted)
                 logger.info(f"Lead #{current_lead.id} updated with: {extracted}")
             
-            # Формируем lead_data для передачи в agent
+            # Проверяем: нужно подтвердить телефон для нового бронирования?
+            pending_phone = context.user_data.get("pending_phone_confirm")
             lead_data = lead_to_dict(current_lead)
+            
+            # Если есть pending телефон И только что получили kids_count — спрашиваем
+            if pending_phone and extracted and extracted.get("kids_count") and not lead_data.get("phone"):
+                keyboard = [
+                    [InlineKeyboardButton(f"✅ Да, использовать {pending_phone}", callback_data="confirm_phone_yes")],
+                    [InlineKeyboardButton("📱 Указать другой номер", callback_data="confirm_phone_no")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"📱 Использовать этот номер телефона для бронирования?\n\n{pending_phone}",
+                    reply_markup=reply_markup
+                )
+                return  # Ждём выбора
+            
+            # РАННЯЯ ОТПРАВКА В CRM: Как только есть телефон — создаём сделку
+            
+            # Проверяем валидность телефона (минимум 10 цифр)
+            phone = lead_data.get("phone", "")
+            phone_digits = ''.join(filter(str.isdigit, str(phone))) if phone else ""
+            has_valid_phone = len(phone_digits) >= 10
+            
+            if has_valid_phone and not current_lead.amocrm_deal_id:
+                # Телефон есть, сделки ещё нет — СОЗДАЁМ!
+                logger.info(f"Phone received! Creating AmoCRM deal for Lead #{current_lead.id}")
+                try:
+                    lead_dict = lead_data.copy()
+                    lead_dict["source"] = "telegram"
+                    lead_dict["first_name"] = user.first_name  # Для имени из профиля
+                    
+                    amocrm_deal_id, amocrm_contact_id = await send_lead_to_amocrm(
+                        lead_dict, 
+                        telegram_id=user_id,
+                        username=user.username
+                    )
+                    if amocrm_deal_id:
+                        # Сохраняем ID сделки и контакта через lead_service (правильная сессия БД)
+                        save_amocrm_deal_id(current_lead.id, str(amocrm_deal_id))
+                        if amocrm_contact_id:
+                            save_amocrm_contact_id(current_lead.id, str(amocrm_contact_id))
+                            current_lead.amocrm_contact_id = str(amocrm_contact_id)
+                        current_lead.amocrm_deal_id = str(amocrm_deal_id)  # Обновляем локальный объект
+                        logger.info(f"Lead #{current_lead.id} created in AmoCRM, deal_id={amocrm_deal_id}, contact_id={amocrm_contact_id}")
+                        
+                        # Отправляем уведомление менеджерам
+                        msg_text = format_lead_message("telegram", user_id, lead_data, username=user.username)
+                        await send_to_managers(msg_text)
+                        mark_lead_sent_to_manager(current_lead.id)
+                        logger.info(f"Manager notification sent for Lead #{current_lead.id}!")
+                except Exception as e:
+                    logger.error(f"Failed to send to AmoCRM: {e}")
+            
+            elif has_valid_phone and current_lead.amocrm_deal_id:
+                # Телефон есть, сделка уже есть — ОБНОВЛЯЕМ!
+                try:
+                    await amocrm_client.update_deal_fields(
+                        int(current_lead.amocrm_deal_id), 
+                        lead_data
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to update AmoCRM deal: {e}")
+            
+            # Формируем lead_data для передачи в agent (добавляем first_name для имени из профиля)
+            lead_data["first_name"] = user.first_name
+        
+        # Проверяем статус сделки в AmoCRM
+        deal_in_work = False
+        status_just_changed = False
+        
+        if current_lead and current_lead.amocrm_deal_id:
+            try:
+                deal_in_work = await amocrm_client.is_deal_in_work(int(current_lead.amocrm_deal_id))
+                
+                # Если статус изменился и клиент ещё не уведомлён
+                if deal_in_work and not current_lead.status_notified:
+                    status_just_changed = True
+                    mark_status_notified(current_lead.id)
+                    logger.info(f"Lead #{current_lead.id} status changed to 'in work', notifying client")
+            except Exception as e:
+                logger.error(f"Failed to check deal status: {e}")
         
         # Показываем индикатор "печатает..."
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
         
-        # Генерируем ответ
+        # Если статус только что изменился — сначала уведомляем
+        if status_just_changed:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id, 
+                text="🎉 Отличные новости! Феи праздников уже начали работу над вашим мероприятием! 🧚‍♀️✨"
+            )
+        
+        # Генерируем ответ (передаём флаг deal_in_work)
         response = agent.generate_response(
             message=message_text,
             intent=session.intent,
             history=history,
             rag_context=rag_context,
-            lead_data=lead_data
+            lead_data=lead_data,
+            deal_in_work=deal_in_work
         )
         
         # Сохраняем ответ
@@ -841,40 +1747,90 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.info(f"Lead #{current_lead.id} updated from bot response: {response_data}")
                 # Обновляем lead_data для следующих итераций
                 lead_data = lead_to_dict(current_lead)
+                
+                # Синхронизируем с AmoCRM если сделка уже создана
+                if current_lead.amocrm_deal_id:
+                    try:
+                        await amocrm_client.update_deal_fields(
+                            int(current_lead.amocrm_deal_id), 
+                            lead_data
+                        )
+                        
+                        # Обновляем имя контакта если клиент указал другое имя
+                        if current_lead.amocrm_contact_id and lead_data.get("customer_name"):
+                            await amocrm_client.update_contact_name(
+                                int(current_lead.amocrm_contact_id),
+                                lead_data["customer_name"]
+                            )
+                        
+                        # Обновляем переписку в AmoCRM (добавляем новую заметку)
+                        conversation_lines = []
+                        for msg in history[-20:]:
+                            role_emoji = "👤" if msg["role"] == "user" else "🤖"
+                            conversation_lines.append(f"{role_emoji} {msg['content'][:300]}")
+                        conversation = "\n\n".join(conversation_lines)
+                        await amocrm_client.add_note(
+                            int(current_lead.amocrm_deal_id), 
+                            f"📱 Обновление переписки:\n\n{conversation}"
+                        )
+                        
+                        logger.info(f"AmoCRM deal {current_lead.amocrm_deal_id} synced with new data")
+                    except Exception as e:
+                        logger.error(f"Failed to sync AmoCRM deal: {e}")
         
         # Отправляем ответ пользователю (ВСЕГДА)
         await context.bot.send_message(chat_id=update.effective_chat.id, text=response)
         
-        # Проверяем, это подтверждение заявки?
-        is_confirmation = current_lead and not current_lead.sent_to_manager and \
-            any(x in response.lower() for x in ["передал", "передаю заявку", "менеджер свяжется", "отдел праздников"])
+        # Если бот сказал про "передам менеджеру" — создаём задачу в AmoCRM и уведомляем менеджеров
+        if deal_in_work and current_lead and current_lead.amocrm_deal_id:
+            is_change_request = any(x in response.lower() for x in ["передам менеджеру", "перезвонят", "передал вашу просьбу"])
+            if is_change_request:
+                try:
+                    # Создаём задачу в AmoCRM
+                    task_text = f"⚠️ Клиент просит изменения: {message_text[:200]}"
+                    await amocrm_client.create_task(int(current_lead.amocrm_deal_id), task_text)
+                    
+                    # Добавляем заметку в сделку
+                    await amocrm_client.add_note(
+                        int(current_lead.amocrm_deal_id),
+                        f"⚠️ КЛИЕНТ ПРОСИТ ВНЕСТИ ИЗМЕНЕНИЯ:\n\n{message_text}"
+                    )
+                    
+                    # Отправляем уведомление менеджерам в TG
+                    customer_name = lead_data.get("customer_name") or "Клиент"
+                    manager_msg = f"⚠️ *ЗАПРОС НА ИЗМЕНЕНИЕ*\n\n"
+                    manager_msg += f"👤 {customer_name}\n"
+                    manager_msg += f"📱 {lead_data.get('phone', 'нет телефона')}\n\n"
+                    manager_msg += f"💬 Просьба клиента:\n{message_text[:300]}\n\n"
+                    manager_msg += f"🔗 Сделка #{current_lead.amocrm_deal_id}"
+                    await send_to_managers(manager_msg)
+                    
+                    logger.info(f"Created callback task for Lead #{current_lead.id}")
+                except Exception as e:
+                    logger.error(f"Failed to create callback task: {e}")
+        
+        # Проверяем, бот сообщил что заявка принята (для отправки фото)
+        is_confirmation = current_lead and \
+            any(x in response.lower() for x in ["передана феям", "заявка принята", "передал заявку"])
         
         if is_confirmation:
-            # Заявка подтверждена — дополнительно отправляем картинку!
-            logger.info(f"Bot confirmed booking for Lead #{current_lead.id} — sending photo!")
+            # "Заявка принята" — отправляем картинку для красоты
+            logger.info(f"Bot announced confirmation for Lead #{current_lead.id} — sending photo!")
             
-            # Извлекаем данные из ОТВЕТА бота
+            # Извлекаем данные из ОТВЕТА бота и обновляем
             final_data = agent.extract_lead_data(response, lead_data)
             current_lead = update_lead_from_data(current_lead.id, final_data)
-            logger.info(f"Lead #{current_lead.id} final data: {lead_to_dict(current_lead)}")
             
-            # Отправляем картинку ДОПОЛНИТЕЛЬНО
-            try:
-                with open(IMAGES["confirmation"], 'rb') as photo_file:
-                    await context.bot.send_photo(
-                        chat_id=update.effective_chat.id,
-                        photo=photo_file
+            # Обновляем сделку в AmoCRM (если есть)
+            if current_lead.amocrm_deal_id:
+                try:
+                    await amocrm_client.update_deal_fields(
+                        int(current_lead.amocrm_deal_id), 
+                        lead_to_dict(current_lead)
                     )
-            except Exception as e:
-                logger.error(f"Failed to send confirmation photo: {e}")
-            
-            # Отправляем уведомление менеджеру
-            msg_text = format_lead_message("telegram", user_id, lead_to_dict(current_lead), username=user.username)
-            await send_to_managers(msg_text)
-            
-            # Помечаем как отправленный
-            mark_lead_sent_to_manager(current_lead.id)
-            logger.info(f"Manager notification sent for Lead #{current_lead.id}!")
+                except Exception as e:
+                    logger.error(f"Failed to update AmoCRM deal: {e}")
+
         
 
         
